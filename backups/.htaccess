@@ -1,0 +1,8 @@
+# Deny all access to backup files
+Order allow,deny
+Deny from all
+
+# Additional security
+<Files "*">
+    Deny from all
+</Files>
