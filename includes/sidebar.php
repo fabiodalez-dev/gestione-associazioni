@@ -121,8 +121,21 @@
                     Gruppi Dinamici
                 </a>
             </li>
+            <?php if (in_array($_SESSION['user_role'] ?? '', ['admin', 'super_admin'])): ?>
+            <li class="nav-item">
+                <a class="nav-link <?php echo (isset($_GET['page']) && $_GET['page'] == 'plugin-manager') ? 'active' : ''; ?>" href="index.php?page=plugin-manager">
+                    <i class="bi bi-puzzle-fill me-2"></i>
+                    Plugin
+                    <?php
+                    $plugin_stats = PluginManager::getStats();
+                    if ($plugin_stats['active'] > 0): ?>
+                        <span class="badge bg-success rounded-pill ms-1"><?php echo $plugin_stats['active']; ?></span>
+                    <?php endif; ?>
+                </a>
+            </li>
+            <?php endif; ?>
         </ul>
-        
+
         <hr>
         
         <div class="px-3 mt-auto">
