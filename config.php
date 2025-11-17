@@ -5,19 +5,32 @@
 
 // Security Headers - send immediately before any output
 if (!defined('INSTALLER_ACTIVE') && !headers_sent()) {
+    $is_https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https');
+
     header('X-Content-Type-Options: nosniff');
     header('X-Frame-Options: SAMEORIGIN');
     header('X-XSS-Protection: 1; mode=block');
     header('Referrer-Policy: strict-origin-when-cross-origin');
-    header('Permissions-Policy: geolocation=(), microphone=(), camera=()');
-    // Content Security Policy (avoid forcing HTTPS in local HTTP to prevent ERR_CONNECTION_CLOSED)
-    $is_https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https');
+    header('Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=()');
+
+    // HSTS - CRITICAL for HTTPS security
+    if ($is_https) {
+        header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
+    }
+
+    // Content Security Policy with nonce for inline scripts
+    $nonce = base64_encode(random_bytes(16));
+    $_SESSION['csp_nonce'] = $nonce;
+
     $csp = "default-src 'self'; "
-         . "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com http://cdn.jsdelivr.net http://cdnjs.cloudflare.com; "
-         . "style-src-elem 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com http://cdn.jsdelivr.net http://cdnjs.cloudflare.com; "
-         . "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com http://cdn.jsdelivr.net http://cdnjs.cloudflare.com; "
-         . "img-src 'self' data:; "
-         . "font-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com http://cdn.jsdelivr.net http://cdnjs.cloudflare.com;";
+         . "script-src 'self' 'nonce-$nonce' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
+         . "style-src 'self' 'nonce-$nonce' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
+         . "img-src 'self' data: https:; "
+         . "font-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
+         . "connect-src 'self'; "
+         . "frame-ancestors 'self'; "
+         . "base-uri 'self'; "
+         . "form-action 'self';";
     if ($is_https) { $csp = "upgrade-insecure-requests; " . $csp; }
     header("Content-Security-Policy: $csp");
 }
@@ -42,6 +55,20 @@ if (session_status() === PHP_SESSION_NONE) {
         session_regenerate_id(true);
         $_SESSION['last_regeneration'] = time();
     }
+
+    // Session timeout check (default 1 hour)
+    if (!defined('INSTALLER_ACTIVE') && isset($_SESSION['user_id'])) {
+        $timeout = 3600; // 1 hour
+        if (isset($_SESSION['last_activity']) && (time() - $_SESSION['last_activity'] > $timeout)) {
+            session_unset();
+            session_destroy();
+            if (basename($_SERVER['PHP_SELF']) !== 'login.php') {
+                header('Location: auth/login.php?timeout=1');
+                exit;
+            }
+        }
+        $_SESSION['last_activity'] = time();
+    }
 }
 
 
@@ -64,7 +91,19 @@ if (file_exists($env_file)) {
 if (!defined('DB_HOST')) define('DB_HOST', $_ENV['DB_HOST'] ?? '127.0.0.1');
 if (!defined('DB_NAME')) define('DB_NAME', $_ENV['DB_NAME'] ?? 'associazione_soci_saas');
 if (!defined('DB_USER')) define('DB_USER', $_ENV['DB_USER'] ?? 'root');
-if (!defined('DB_PASS')) define('DB_PASS', $_ENV['DB_PASS'] ?? ''); // No default password for security
+// SECURITY FIX: No default password - fail if not set
+if (!defined('DB_PASS')) {
+    $db_pass = $_ENV['DB_PASS'] ?? null;
+    if ($db_pass === null || $db_pass === '') {
+        // Allow empty password only in development (localhost)
+        $is_localhost = in_array($_SERVER['SERVER_ADDR'] ?? '', ['127.0.0.1', '::1', 'localhost']);
+        if (!$is_localhost && !defined('INSTALLER_ACTIVE')) {
+            die('SECURITY ERROR: DB_PASS must be set in .env file. Never use empty password in production!');
+        }
+        $db_pass = ''; // Allow empty only for localhost
+    }
+    define('DB_PASS', $db_pass);
+}
 if (!defined('DB_CHARSET')) define('DB_CHARSET', 'utf8mb4');
 
 // --- Costanti di Sistema ---
@@ -287,20 +326,23 @@ if (!function_exists('redirect')) {
 }
 
 /**
- * Genera un UUID v4 compatibile con MySQL CHAR(36).
- * @return string
+ * Genera un UUID v4 crittograficamente sicuro compatibile con MySQL CHAR(36).
+ * SECURITY FIX: Usa random_bytes() invece di mt_rand() per sicurezza
+ * @return string UUID v4 formato standard (es: "550e8400-e29b-41d4-a716-446655440000")
  */
 if (!function_exists('generateUuid')) {
     function generateUuid() {
-    // Funzione PHP per generare UUID v4
-    // Source: https://www.php.net/manual/en/function.uniqid.php#94959
-    return sprintf( '%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
-        mt_rand( 0, 0xffff ), mt_rand( 0, 0xffff ),
-        mt_rand( 0, 0xffff ),
-        mt_rand( 0, 0x0fff ) | 0x4000,
-        mt_rand( 0, 0x3fff ) | 0x8000,
-        mt_rand( 0, 0xffff ), mt_rand( 0, 0xffff ), mt_rand( 0, 0xffff )
-    );
+        // Genera 16 byte random crittografici
+        $data = random_bytes(16);
+
+        // Set version (0100) per UUID v4
+        $data[6] = chr(ord($data[6]) & 0x0f | 0x40);
+
+        // Set variant (10xx) per RFC 4122
+        $data[8] = chr(ord($data[8]) & 0x3f | 0x80);
+
+        // Formatta come UUID
+        return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
     }
 }
 
@@ -458,4 +500,299 @@ if (!function_exists('showAnimatedNotification')) {
  */
 if (!is_dir(UPLOADS_PATH . '/logos')) {
     mkdir(UPLOADS_PATH . '/logos', 0755, true);
+}
+
+// ============================================================================
+// PLUGIN SYSTEM - Hook Manager & Plugin Manager
+// ============================================================================
+
+// Load Hook Manager
+require_once APP_ROOT . '/lib/HookManager.php';
+
+// Load Plugin Manager
+require_once APP_ROOT . '/lib/PluginManager.php';
+
+// Initialize Plugin System
+if (isset($pdo) && !defined('INSTALLER_ACTIVE')) {
+    try {
+        PluginManager::init($pdo);
+        // Hook: Application fully loaded
+        HookManager::doAction('app_loaded');
+    } catch (Exception $e) {
+        error_log("Error initializing Plugin Manager: " . $e->getMessage());
+    }
+}
+
+// ============================================================================
+// SECURITY FUNCTIONS - Rate Limiting, Logging, Validation
+// ============================================================================
+
+/**
+ * Verifica rate limiting per login attempts
+ * Blocca dopo 5 tentativi falliti per 15 minuti
+ *
+ * @param PDO $pdo Database connection
+ * @param string $identifier Email o IP address
+ * @param string $type Tipo: 'admin' o 'socio'
+ * @return array ['allowed' => bool, 'remaining' => int, 'retry_after' => int]
+ * @throws Exception se rate limit superato
+ */
+if (!function_exists('checkLoginRateLimit')) {
+    function checkLoginRateLimit($pdo, $identifier, $type = 'admin') {
+        $max_attempts = 5;
+        $window_seconds = 900; // 15 minuti
+
+        // Crea tabella se non esiste
+        try {
+            $pdo->exec("CREATE TABLE IF NOT EXISTS login_attempts (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                identifier VARCHAR(255) NOT NULL,
+                type ENUM('admin', 'socio') NOT NULL,
+                ip_address VARCHAR(45),
+                attempted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_identifier_type (identifier, type),
+                INDEX idx_attempted_at (attempted_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        } catch (PDOException $e) {
+            // Tabella già esiste, continua
+        }
+
+        // Pulisci vecchi tentativi (oltre la finestra temporale)
+        $cutoff_time = date('Y-m-d H:i:s', time() - $window_seconds);
+        $stmt = $pdo->prepare("DELETE FROM login_attempts WHERE attempted_at < ?");
+        $stmt->execute([$cutoff_time]);
+
+        // Conta tentativi recenti
+        $stmt = $pdo->prepare("SELECT COUNT(*) as attempts, MAX(attempted_at) as last_attempt
+                               FROM login_attempts
+                               WHERE identifier = ? AND type = ? AND attempted_at >= ?");
+        $stmt->execute([$identifier, $type, $cutoff_time]);
+        $result = $stmt->fetch();
+
+        $attempts = (int)$result['attempts'];
+        $remaining = max(0, $max_attempts - $attempts);
+
+        // Calcola retry_after se bloccato
+        $retry_after = 0;
+        if ($attempts >= $max_attempts && $result['last_attempt']) {
+            $last_attempt_time = strtotime($result['last_attempt']);
+            $retry_after = max(0, $window_seconds - (time() - $last_attempt_time));
+        }
+
+        // Blocca se superato il limite
+        if ($attempts >= $max_attempts) {
+            $minutes = ceil($retry_after / 60);
+            throw new Exception("Troppi tentativi di login falliti. Riprova tra $minutes minuti.");
+        }
+
+        return [
+            'allowed' => true,
+            'remaining' => $remaining,
+            'retry_after' => 0
+        ];
+    }
+}
+
+/**
+ * Registra un tentativo di login fallito
+ */
+if (!function_exists('recordLoginAttempt')) {
+    function recordLoginAttempt($pdo, $identifier, $type = 'admin') {
+        $ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+        try {
+            $stmt = $pdo->prepare("INSERT INTO login_attempts (identifier, type, ip_address) VALUES (?, ?, ?)");
+            $stmt->execute([$identifier, $type, $ip]);
+        } catch (PDOException $e) {
+            error_log("Failed to record login attempt: " . $e->getMessage());
+        }
+    }
+}
+
+/**
+ * Pulisce i tentativi di login dopo login riuscito
+ */
+if (!function_exists('clearLoginAttempts')) {
+    function clearLoginAttempts($pdo, $identifier, $type = 'admin') {
+        try {
+            $stmt = $pdo->prepare("DELETE FROM login_attempts WHERE identifier = ? AND type = ?");
+            $stmt->execute([$identifier, $type]);
+        } catch (PDOException $e) {
+            error_log("Failed to clear login attempts: " . $e->getMessage());
+        }
+    }
+}
+
+/**
+ * Valida la robustezza della password
+ * Requisiti: min 12 caratteri, maiuscole, minuscole, numeri, simboli
+ */
+if (!function_exists('validatePasswordStrength')) {
+    function validatePasswordStrength($password) {
+        $errors = [];
+
+        if (strlen($password) < 12) {
+            $errors[] = "La password deve contenere almeno 12 caratteri";
+        }
+        if (strlen($password) > 128) {
+            $errors[] = "La password non può superare 128 caratteri";
+        }
+        if (!preg_match('/[A-Z]/', $password)) {
+            $errors[] = "La password deve contenere almeno una lettera maiuscola";
+        }
+        if (!preg_match('/[a-z]/', $password)) {
+            $errors[] = "La password deve contenere almeno una lettera minuscola";
+        }
+        if (!preg_match('/[0-9]/', $password)) {
+            $errors[] = "La password deve contenere almeno un numero";
+        }
+        if (!preg_match('/[^A-Za-z0-9]/', $password)) {
+            $errors[] = "La password deve contenere almeno un carattere speciale (!@#$%^&*)";
+        }
+
+        // Check contro password comuni
+        $common_passwords = [
+            'password', '123456', '123456789', '12345678', '12345', '1234567',
+            'password1', 'password123', 'qwerty', 'abc123', 'admin', 'admin123'
+        ];
+        if (in_array(strtolower($password), $common_passwords)) {
+            $errors[] = "La password è troppo comune. Scegline una più sicura";
+        }
+
+        return [
+            'valid' => empty($errors),
+            'errors' => $errors
+        ];
+    }
+}
+
+/**
+ * Log evento di sicurezza
+ */
+if (!function_exists('logSecurityEvent')) {
+    function logSecurityEvent($pdo, $event_type, $description, $context = [], $severity = 'info') {
+        // Crea tabella se non esiste
+        try {
+            $pdo->exec("CREATE TABLE IF NOT EXISTS security_log (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                event_type VARCHAR(50) NOT NULL,
+                severity ENUM('info', 'warning', 'critical') NOT NULL DEFAULT 'info',
+                description TEXT NOT NULL,
+                user_id CHAR(36) NULL,
+                ip_address VARCHAR(45),
+                user_agent TEXT,
+                context_json JSON,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_event_type (event_type),
+                INDEX idx_severity (severity),
+                INDEX idx_created_at (created_at),
+                INDEX idx_ip (ip_address)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        } catch (PDOException $e) {
+            error_log("[SECURITY] $severity - $event_type: $description");
+            return;
+        }
+
+        // Prepara context
+        $full_context = array_merge([
+            'ip' => $_SERVER['REMOTE_ADDR'] ?? 'unknown',
+            'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? 'unknown',
+            'request_uri' => $_SERVER['REQUEST_URI'] ?? '',
+            'method' => $_SERVER['REQUEST_METHOD'] ?? 'GET',
+        ], $context);
+
+        $user_id = $_SESSION['user_id'] ?? null;
+
+        // Insert log
+        try {
+            $stmt = $pdo->prepare("INSERT INTO security_log
+                                   (event_type, severity, description, user_id, ip_address, user_agent, context_json)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?)");
+            $stmt->execute([
+                $event_type,
+                $severity,
+                $description,
+                $user_id,
+                $full_context['ip'],
+                $full_context['user_agent'],
+                json_encode($full_context)
+            ]);
+        } catch (PDOException $e) {
+            error_log("[SECURITY] Failed to log event: " . $e->getMessage());
+        }
+    }
+}
+
+/**
+ * Validazione sicura file upload con controlli aggiuntivi
+ */
+if (!function_exists('validateFileUploadSecure')) {
+    function validateFileUploadSecure($file, $allowed_types = ['jpg', 'jpeg', 'png', 'pdf'], $max_size = 5242880) {
+        $errors = [];
+
+        if (!isset($file['error']) || is_array($file['error'])) {
+            $errors[] = "Parametri file non validi";
+            return $errors;
+        }
+
+        switch ($file['error']) {
+            case UPLOAD_ERR_OK:
+                break;
+            case UPLOAD_ERR_INI_SIZE:
+            case UPLOAD_ERR_FORM_SIZE:
+                $errors[] = "File troppo grande";
+                return $errors;
+            case UPLOAD_ERR_NO_FILE:
+                $errors[] = "Nessun file caricato";
+                return $errors;
+            default:
+                $errors[] = "Errore sconosciuto durante l'upload";
+                return $errors;
+        }
+
+        if (!is_uploaded_file($file['tmp_name'])) {
+            $errors[] = "File non valido (possibile attacco)";
+            return $errors;
+        }
+
+        if ($file['size'] > $max_size) {
+            $errors[] = "File troppo grande. Massimo " . round($max_size/1024/1024, 1) . "MB";
+        }
+
+        if ($file['size'] <= 0) {
+            $errors[] = "File vuoto";
+        }
+
+        $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+        if (!in_array($ext, $allowed_types, true)) {
+            $errors[] = "Tipo file non permesso. Permessi: " . implode(', ', $allowed_types);
+        }
+
+        // Check MIME type
+        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+        $mime = finfo_file($finfo, $file['tmp_name']);
+        finfo_close($finfo);
+
+        $allowed_mimes = [
+            'jpg' => 'image/jpeg',
+            'jpeg' => 'image/jpeg',
+            'png' => 'image/png',
+            'pdf' => 'application/pdf',
+            'doc' => 'application/msword',
+            'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        ];
+
+        if (isset($allowed_mimes[$ext]) && $mime !== $allowed_mimes[$ext]) {
+            $errors[] = "Tipo MIME non valido per l'estensione del file";
+        }
+
+        // Check for embedded PHP code in images
+        if (in_array($ext, ['jpg', 'jpeg', 'png', 'gif'])) {
+            $content = file_get_contents($file['tmp_name']);
+            if (preg_match('/<\?php/i', $content)) {
+                $errors[] = "File contiene codice PHP pericoloso";
+            }
+        }
+
+        return $errors;
+    }
 }

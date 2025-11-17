@@ -260,7 +260,8 @@ HTML;
 
 // Configura Dompdf
 $options = new Options();
-$options->set('isRemoteEnabled', true);
+// SECURITY FIX: Disable remote loading to prevent SSRF attacks
+$options->set('isRemoteEnabled', false);
 $options->set('defaultFont', 'DejaVu Sans');
 $dompdf = new Dompdf($options);
 

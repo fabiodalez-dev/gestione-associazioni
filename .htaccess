@@ -1,99 +1,420 @@
-# Security and performance optimizations for Associazione Soci Manager
+# ========================================================================
+# GESTIONE ASSOCIAZIONI - APACHE SECURITY HARDENING
+# ========================================================================
+# Questo .htaccess implementa best practices di sicurezza e performance
+# per proteggere l'applicazione da attacchi comuni
+#
+# FEATURES:
+# - HTTPS redirect forzato
+# - Security headers (backup a quelli PHP)
+# - Protezione file sensibili
+# - Rate limiting basico
+# - Compressione GZIP
+# - Cache control ottimizzato
+# - Directory traversal protection
+# - Hotlink protection
+#
+# ISTRUZIONI:
+# 1. Rinomina questo file in .htaccess (sovrascrivi quello esistente)
+# 2. Adatta le regole al tuo ambiente (vedi sezioni con "CUSTOMIZE")
+# 3. Testa accuratamente tutti i link dopo l'attivazione
+# 4. Monitora error.log di Apache per eventuali problemi
+#
+# Created: 2025-11-17
+# ========================================================================
 
-# Disable directory browsing
-Options -Indexes
+# ========================================================================
+# 1. FORZA HTTPS (CRITICO PER SICUREZZA)
+# ========================================================================
+# Redirect tutto il traffico HTTP a HTTPS
+# CUSTOMIZE: Cambia example.com con il tuo dominio
 
-# Security headers
-<IfModule mod_headers.c>
-    Header always set X-Content-Type-Options nosniff
-    Header always set X-Frame-Options DENY
-    Header always set X-XSS-Protection "1; mode=block"
-    Header always set Referrer-Policy "strict-origin-when-cross-origin"
-    Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src 'self' https://cdn.jsdelivr.net; img-src 'self' data: https:; connect-src 'self';"
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Forza HTTPS (disabilita in sviluppo locale)
+    # RewriteCond %{HTTPS} off
+    # RewriteCond %{HTTP_HOST} ^(www\.)?yourdomain\.com$ [NC]
+    # RewriteRule ^(.*)$ https://%{HTTP_HOST}/$1 [R=301,L]
+
+    # Forza www (opzionale)
+    # RewriteCond %{HTTP_HOST} !^www\. [NC]
+    # RewriteCond %{HTTP_HOST} ^yourdomain\.com$ [NC]
+    # RewriteRule ^(.*)$ https://www.yourdomain.com/$1 [R=301,L]
 </IfModule>
 
-# Hide sensitive files
-<Files "config.php">
-    Order allow,deny
-    Deny from all
-</Files>
+# ========================================================================
+# 2. SECURITY HEADERS (BACKUP A QUELLI PHP)
+# ========================================================================
+# Questi header sono anche inviati da PHP, ma li mettiamo anche qui
+# per difesa in profondità (se PHP non li invia, Apache li invia)
 
-<Files "database_schema.sql">
-    Order allow,deny
-    Deny from all
-</Files>
+<IfModule mod_headers.c>
+    # Previene MIME type sniffing
+    Header always set X-Content-Type-Options "nosniff"
 
-<Files ".env">
-    Order allow,deny
-    Deny from all
-</Files>
+    # Previene clickjacking
+    Header always set X-Frame-Options "SAMEORIGIN"
 
-# Protect backup directory
-<DirectoryMatch "^.*/backups/">
-    Order allow,deny
-    Deny from all
-</DirectoryMatch>
+    # XSS Protection (legacy, ma ancora utile)
+    Header always set X-XSS-Protection "1; mode=block"
 
-# PHP settings for security
+    # Referrer Policy
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+
+    # Permissions Policy (disabilita API pericolose)
+    Header always set Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()"
+
+    # HSTS (HTTPS Strict Transport Security) - SOLO SE USI HTTPS!
+    # Decommentare SOLO se hai HTTPS attivo su tutto il sito
+    # Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" env=HTTPS
+
+    # Remove Server header (nasconde versione Apache)
+    Header unset Server
+    Header always unset X-Powered-By
+
+    # Content Security Policy (backup, PHP lo invia con nonce)
+    # Header always set Content-Security-Policy "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; img-src 'self' data: https:; font-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com;"
+</IfModule>
+
+# ========================================================================
+# 3. PROTEZIONE FILE SENSIBILI
+# ========================================================================
+# Blocca accesso diretto a file di configurazione, .env, backups, etc.
+
+# Blocca accesso a .env file
+<FilesMatch "^\.env">
+    Require all denied
+</FilesMatch>
+
+# Blocca accesso a file di configurazione
+<FilesMatch "^(config\.php|security_patches\.php)$">
+    Require all denied
+</FilesMatch>
+
+# Blocca accesso a directory vendor (composer)
+<IfModule mod_rewrite.c>
+    RewriteRule ^vendor/.*$ - [F,L]
+</IfModule>
+
+# Blocca accesso a directory migrations (sicurezza)
+<IfModule mod_rewrite.c>
+    RewriteRule ^migrations/.*$ - [F,L]
+</IfModule>
+
+# Blocca accesso a file backup database
+<FilesMatch "\.(sql|sql\.gz|sql\.bz2|sql\.zip)$">
+    Require all denied
+</FilesMatch>
+
+# Blocca accesso a file git
+<FilesMatch "^\.git">
+    Require all denied
+</FilesMatch>
+
+# Blocca accesso a file di sistema nascosti
+<FilesMatch "^\.">
+    Require all denied
+</FilesMatch>
+
+# Blocca accesso diretto a composer files
+<FilesMatch "^(composer\.(json|lock)|package(-lock)?\.json)$">
+    Require all denied
+</FilesMatch>
+
+# Blocca accesso a log files
+<FilesMatch "\.(log|logs)$">
+    Require all denied
+</FilesMatch>
+
+# ========================================================================
+# 4. DIRECTORY LISTING DISABLED
+# ========================================================================
+# Previene listing delle directory (information disclosure)
+
+Options -Indexes
+
+# ========================================================================
+# 5. PROTEZIONE DIRECTORY TRAVERSAL
+# ========================================================================
+# Blocca tentativi di directory traversal
+
+<IfModule mod_rewrite.c>
+    # Blocca URL con ../ o ..\
+    RewriteCond %{THE_REQUEST} (\.\.\/|\.\.\\) [NC,OR]
+    RewriteCond %{REQUEST_URI} ^.*(\.\.).*$ [NC]
+    RewriteRule .* - [F,L]
+
+    # Blocca URL con null bytes
+    RewriteCond %{QUERY_STRING} \0 [OR]
+    RewriteCond %{REQUEST_URI} \0
+    RewriteRule .* - [F,L]
+
+    # Blocca query strings pericolose (SQL injection attempts)
+    RewriteCond %{QUERY_STRING} (union.*select|insert.*into|delete.*from|drop.*table) [NC]
+    RewriteRule .* - [F,L]
+
+    # Blocca PHP injection attempts
+    RewriteCond %{QUERY_STRING} (<script|<iframe|<object|<embed) [NC,OR]
+    RewriteCond %{QUERY_STRING} (base64_encode|eval\(|gzinflate) [NC]
+    RewriteRule .* - [F,L]
+</IfModule>
+
+# ========================================================================
+# 6. PROTEZIONE FILE UPLOAD
+# ========================================================================
+# Previene esecuzione di script nelle directory upload
+
+<Directory "uploads">
+    # Disabilita esecuzione PHP
+    <FilesMatch "\.(php|php3|php4|php5|phtml)$">
+        Require all denied
+    </FilesMatch>
+
+    # Force download invece di esecuzione
+    <IfModule mod_headers.c>
+        Header set Content-Disposition "attachment"
+    </IfModule>
+
+    # Disabilita override .htaccess in subdirectory
+    AllowOverride None
+
+    # Permetti solo file statici
+    Options -ExecCGI -Includes
+</Directory>
+
+# ========================================================================
+# 7. RATE LIMITING BASICO (RICHIEDE mod_ratelimit)
+# ========================================================================
+# Limita velocità download per prevenire bandwidth abuse
+# NOTA: Per rate limiting login usa la funzione PHP in security_patches.php
+
+<IfModule mod_ratelimit.c>
+    # Limita download a 500KB/s (personalizza in base al tuo server)
+    <Location /uploads>
+        SetOutputFilter RATE_LIMIT
+        SetEnv rate-limit 500
+    </Location>
+</IfModule>
+
+# ========================================================================
+# 8. COMPRESSIONE GZIP (PERFORMANCE)
+# ========================================================================
+# Comprimi text-based files per ridurre banda e migliorare velocità
+
+<IfModule mod_deflate.c>
+    # Comprimi HTML, CSS, JavaScript, Text, XML, fonts
+    AddOutputFilterByType DEFLATE application/javascript
+    AddOutputFilterByType DEFLATE application/json
+    AddOutputFilterByType DEFLATE application/rss+xml
+    AddOutputFilterByType DEFLATE application/vnd.ms-fontobject
+    AddOutputFilterByType DEFLATE application/x-font-ttf
+    AddOutputFilterByType DEFLATE application/x-javascript
+    AddOutputFilterByType DEFLATE application/xhtml+xml
+    AddOutputFilterByType DEFLATE application/xml
+    AddOutputFilterByType DEFLATE font/opentype
+    AddOutputFilterByType DEFLATE font/otf
+    AddOutputFilterByType DEFLATE font/ttf
+    AddOutputFilterByType DEFLATE image/svg+xml
+    AddOutputFilterByType DEFLATE image/x-icon
+    AddOutputFilterByType DEFLATE text/css
+    AddOutputFilterByType DEFLATE text/html
+    AddOutputFilterByType DEFLATE text/javascript
+    AddOutputFilterByType DEFLATE text/plain
+    AddOutputFilterByType DEFLATE text/xml
+
+    # Eccezioni per vecchi browser
+    BrowserMatch ^Mozilla/4 gzip-only-text/html
+    BrowserMatch ^Mozilla/4\.0[678] no-gzip
+    BrowserMatch \bMSIE !no-gzip !gzip-only-text/html
+</IfModule>
+
+# ========================================================================
+# 9. CACHE CONTROL (PERFORMANCE)
+# ========================================================================
+# Imposta cache headers per migliorare performance
+
+<IfModule mod_expires.c>
+    ExpiresActive On
+
+    # Default: 1 ora
+    ExpiresDefault "access plus 1 hour"
+
+    # HTML (no cache, sempre fresco)
+    ExpiresByType text/html "access plus 0 seconds"
+
+    # CSS e JavaScript (1 settimana)
+    ExpiresByType text/css "access plus 1 week"
+    ExpiresByType application/javascript "access plus 1 week"
+    ExpiresByType application/x-javascript "access plus 1 week"
+
+    # Immagini (1 mese)
+    ExpiresByType image/gif "access plus 1 month"
+    ExpiresByType image/jpeg "access plus 1 month"
+    ExpiresByType image/png "access plus 1 month"
+    ExpiresByType image/x-icon "access plus 1 month"
+    ExpiresByType image/svg+xml "access plus 1 month"
+
+    # Font (1 anno)
+    ExpiresByType application/vnd.ms-fontobject "access plus 1 year"
+    ExpiresByType application/x-font-ttf "access plus 1 year"
+    ExpiresByType application/x-font-woff "access plus 1 year"
+    ExpiresByType font/opentype "access plus 1 year"
+    ExpiresByType font/ttf "access plus 1 year"
+    ExpiresByType font/otf "access plus 1 year"
+    ExpiresByType font/woff "access plus 1 year"
+    ExpiresByType font/woff2 "access plus 1 year"
+
+    # PDF e documenti (1 mese)
+    ExpiresByType application/pdf "access plus 1 month"
+
+    # Audio e video (1 mese)
+    ExpiresByType audio/ogg "access plus 1 month"
+    ExpiresByType video/mp4 "access plus 1 month"
+    ExpiresByType video/webm "access plus 1 month"
+</IfModule>
+
+<IfModule mod_headers.c>
+    # Cache-Control headers
+    <FilesMatch "\.(css|js|jpg|jpeg|png|gif|svg|woff|woff2|ttf|otf|eot)$">
+        Header set Cache-Control "public, max-age=604800"
+    </FilesMatch>
+
+    <FilesMatch "\.(html|htm|php)$">
+        Header set Cache-Control "private, no-cache, no-store, must-revalidate"
+        Header set Pragma "no-cache"
+        Header set Expires 0
+    </FilesMatch>
+</IfModule>
+
+# ========================================================================
+# 10. HOTLINK PROTECTION (OPZIONALE)
+# ========================================================================
+# Previene altri siti dal linkare direttamente le tue immagini/file
+# CUSTOMIZE: Cambia yourdomain.com con il tuo dominio
+
+<IfModule mod_rewrite.c>
+    # Decommentare per abilitare hotlink protection
+    # RewriteCond %{HTTP_REFERER} !^$
+    # RewriteCond %{HTTP_REFERER} !^https?://(www\.)?yourdomain\.com [NC]
+    # RewriteRule \.(jpg|jpeg|png|gif|svg|pdf)$ - [F,L]
+</IfModule>
+
+# ========================================================================
+# 11. PHP SECURITY SETTINGS (se Apache gestisce PHP)
+# ========================================================================
+# Settings di sicurezza PHP (backup a php.ini)
+
 <IfModule mod_php7.c>
+    # Disabilita funzioni pericolose
     php_flag display_errors Off
     php_flag log_errors On
     php_value error_log /var/log/php_errors.log
-    php_flag expose_php Off
-</IfModule>
 
-# Enable compression
-<IfModule mod_deflate.c>
-    AddOutputFilterByType DEFLATE text/plain
-    AddOutputFilterByType DEFLATE text/html
-    AddOutputFilterByType DEFLATE text/xml
-    AddOutputFilterByType DEFLATE text/css
-    AddOutputFilterByType DEFLATE application/xml
-    AddOutputFilterByType DEFLATE application/xhtml+xml
-    AddOutputFilterByType DEFLATE application/rss+xml
-    AddOutputFilterByType DEFLATE application/javascript
-    AddOutputFilterByType DEFLATE application/x-javascript
-</IfModule>
-
-# Browser caching
-<IfModule mod_expires.c>
-    ExpiresActive on
-    ExpiresByType text/css "access plus 1 month"
-    ExpiresByType application/javascript "access plus 1 month"
-    ExpiresByType image/png "access plus 1 month"
-    ExpiresByType image/jpg "access plus 1 month"
-    ExpiresByType image/jpeg "access plus 1 month"
-    ExpiresByType image/gif "access plus 1 month"
-    ExpiresByType image/ico "access plus 1 month"
-    ExpiresByType image/icon "access plus 1 month"
-    ExpiresByType text/x-icon "access plus 1 month"
-    ExpiresByType application/x-icon "access plus 1 month"
-    ExpiresByType font/woff "access plus 1 month"
-    ExpiresByType font/woff2 "access plus 1 month"
-</IfModule>
-
-# URL Rewriting for clean URLs (optional)
-RewriteEngine On
-
-# Redirect HTTP to HTTPS (uncomment in production)
-# RewriteCond %{HTTPS} off
-# RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
-
-# Block common attack patterns
-RewriteCond %{QUERY_STRING} (\<|%3C).*script.*(\>|%3E) [NC,OR]
-RewriteCond %{QUERY_STRING} GLOBALS(=|\[|\%[0-9A-Z]{0,2}) [OR]
-RewriteCond %{QUERY_STRING} _REQUEST(=|\[|\%[0-9A-Z]{0,2}) [OR]
-RewriteCond %{QUERY_STRING} proc/self/environ [OR]
-RewriteCond %{QUERY_STRING} mosConfig_[a-zA-Z_]{1,21}(=|\%3D) [OR]
-RewriteCond %{QUERY_STRING} base64_(en|de)code\(.*\) [OR]
-RewriteCond %{QUERY_STRING} (<|%3C)([^s]*s)+cript.*(>|%3E) [NC,OR]
-RewriteCond %{QUERY_STRING} (<|%3C).*iframe.*(>|%3E) [NC]
-RewriteRule ^(.*)$ index.php [F,L]
-
-# Limit file upload size (adjust as needed)
-<IfModule mod_php7.c>
+    # Limita upload size (personalizza)
     php_value upload_max_filesize 10M
     php_value post_max_size 10M
-    php_value max_execution_time 300
-    php_value max_input_time 300
+
+    # Session security
+    php_flag session.cookie_httponly On
+    php_flag session.cookie_secure On
+    php_value session.cookie_samesite Strict
+    php_flag session.use_strict_mode On
 </IfModule>
+
+# ========================================================================
+# 12. URL REWRITING (per route pulite)
+# ========================================================================
+# Gestione routing applicazione
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Reindirizza richieste a index.php (se file/directory non esiste)
+    # Mantieni questo DOPO tutte le altre regole RewriteRule
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{REQUEST_URI} !^/index\.php
+    # RewriteRule ^(.*)$ index.php?page=$1 [QSA,L]
+</IfModule>
+
+# ========================================================================
+# 13. CUSTOM ERROR PAGES (OPZIONALE)
+# ========================================================================
+# Personalizza pagine errore (crea i file prima di abilitare)
+
+# ErrorDocument 400 /errors/400.php
+# ErrorDocument 401 /errors/401.php
+# ErrorDocument 403 /errors/403.php
+# ErrorDocument 404 /pages/404.php
+# ErrorDocument 500 /errors/500.php
+# ErrorDocument 503 /errors/503.php
+
+# ========================================================================
+# 14. UTF-8 ENCODING
+# ========================================================================
+# Imposta UTF-8 come encoding default
+
+AddDefaultCharset UTF-8
+<IfModule mod_mime.c>
+    AddCharset UTF-8 .html .css .js .xml .json .rss .atom
+</IfModule>
+
+# ========================================================================
+# 15. BLOCCO USER AGENTS MALEVOLI (OPZIONALE)
+# ========================================================================
+# Blocca bot/scraper noti per essere malevoli
+# ATTENZIONE: Può bloccare alcuni bot legittimi, usa con cautela
+
+<IfModule mod_rewrite.c>
+    # Decommentare per abilitare
+    # RewriteCond %{HTTP_USER_AGENT} (libwww|wget|python|nikto|scan|java|winhttp|clshttp|loader) [NC,OR]
+    # RewriteCond %{HTTP_USER_AGENT} (;|<|>|'|"|\)|\(|%0A|%0D|%27|%3C|%3E|%00) [NC]
+    # RewriteRule .* - [F,L]
+</IfModule>
+
+# ========================================================================
+# 16. IP BLACKLIST (OPZIONALE)
+# ========================================================================
+# Blocca IP specifici (abuse, attacchi)
+# CUSTOMIZE: Aggiungi IP da bloccare
+
+<IfModule mod_authz_core.c>
+    # Esempio blocco singolo IP:
+    # Require not ip 123.123.123.123
+
+    # Esempio blocco range IP:
+    # Require not ip 123.123.123.0/24
+</IfModule>
+
+# ========================================================================
+# 17. FINE CONFIGURAZIONE
+# ========================================================================
+# Se hai raggiunto questo punto, il tuo .htaccess è completo!
+# Ricorda di testare accuratamente tutte le funzionalità dopo l'attivazione.
+#
+# TESTING CHECKLIST:
+# [ ] Login admin funziona
+# [ ] Login area soci funziona
+# [ ] Upload file funziona
+# [ ] Download PDF tessere funziona
+# [ ] Export CSV funziona
+# [ ] HTTPS redirect funziona (se abilitato)
+# [ ] File .env non accessibile da browser
+# [ ] File config.php non accessibile da browser
+# [ ] Directory vendor/ non accessibile
+# [ ] Compressione GZIP attiva (controlla con DevTools)
+# [ ] Cache headers corretti (controlla con DevTools)
+#
+# MONITORING:
+# Monitora i log Apache per:
+# - Errori 403 (potrebbero indicare regole troppo restrittive)
+# - Errori 500 (potrebbero indicare configurazione .htaccess errata)
+# - Pattern di attacco (SQL injection, XSS, directory traversal)
+#
+# COMANDI UTILI:
+# tail -f /var/log/apache2/error.log     # Monitora errori Apache
+# tail -f /var/log/apache2/access.log    # Monitora accessi
+# apachectl configtest                    # Verifica configurazione Apache
+#
+# ========================================================================

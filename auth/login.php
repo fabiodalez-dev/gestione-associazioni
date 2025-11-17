@@ -10,26 +10,46 @@ if (isUserLoggedIn()) {
 }
 
 $error = '';
+$success = '';
+
+// Show timeout message if session expired
+if (isset($_GET['timeout']) && $_GET['timeout'] == '1') {
+    $error = 'Sessione scaduta. Effettua nuovamente il login.';
+}
 
 // Gestione del form di login
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $email = sanitizeInput($_POST['email'] ?? '');
+    $email = cleanInput($_POST['email'] ?? '');
     $password = $_POST['password'] ?? '';
 
-    if (empty($email) || empty($password)) {
+    // CSRF Token Validation
+    if (!validateCSRFToken($_POST['csrf_token'] ?? '')) {
+        $error = 'Errore di sicurezza. Riprova.';
+        logSecurityEvent($pdo, 'csrf_failed', 'CSRF token invalid on admin login', ['email' => $email], 'critical');
+    } elseif (empty($email) || empty($password)) {
         $error = 'Email e password sono obbligatori.';
     } else {
+        // Rate Limiting Check
         try {
-            // Cerca l'utente nella nuova tabella `utenti`
-            $stmt = $pdo->prepare("SELECT id, associazione_id, nome, cognome, email, password_hash, ruolo, attivo FROM utenti WHERE email = ?");
-            $stmt->execute([$email]);
-            $user = $stmt->fetch();
+            checkLoginRateLimit($pdo, $email, 'admin');
+        } catch (Exception $e) {
+            $error = $e->getMessage();
+            logSecurityEvent($pdo, 'login_rate_limit', 'Rate limit exceeded for admin login', ['email' => $email], 'warning');
+        }
+        if (!$error) { // Procedi solo se rate limiting OK
+            try {
+                // Cerca l'utente nella nuova tabella `utenti`
+                $stmt = $pdo->prepare("SELECT id, associazione_id, nome, cognome, email, password_hash, ruolo, attivo FROM utenti WHERE email = ?");
+                $stmt->execute([$email]);
+                $user = $stmt->fetch();
 
-            // Verifica l'utente e la password
-            if ($user && password_verify($password, $user['password_hash'])) {
-                if (!$user['attivo']) {
-                    $error = 'Il tuo account è stato disattivato.';
-                } else {
+                // Verifica l'utente e la password - GENERIC error message to prevent user enumeration
+                if ($user && $user['attivo'] && password_verify($password, $user['password_hash'])) {
+                    // LOGIN SUCCESS
+
+                    // Clear login attempts
+                    clearLoginAttempts($pdo, $email, 'admin');
+
                     // Imposta le variabili di sessione
                     $_SESSION['user_id'] = $user['id'];
                     $_SESSION['user_email'] = $user['email'];
@@ -50,12 +70,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmt_update = $pdo->prepare("UPDATE utenti SET last_login = CURRENT_TIMESTAMP WHERE id = ?");
                     $stmt_update->execute([$user['id']]);
 
+                    // Log security event
+                    logSecurityEvent($pdo, 'login_success', 'Admin login successful', [
+                        'email' => $email,
+                        'user_id' => $user['id'],
+                        'role' => $user['ruolo']
+                    ], 'info');
+
                     // Reindirizza alla dashboard
                     redirect('../index.php?page=dashboard');
+                } else {
+                    // LOGIN FAILED - Generic message (don't reveal if user exists or if account disabled)
+                    $error = 'Email o password non corretti.';
+
+                    // Record failed attempt
+                    recordLoginAttempt($pdo, $email, 'admin');
+
+                    // Log security event
+                    logSecurityEvent($pdo, 'login_failed', 'Admin login attempt failed', ['email' => $email], 'warning');
                 }
-            } else {
-                $error = 'Credenziali non valide.';
-            }
         } catch (PDOException $e) {
             // In produzione, loggare l'errore invece di mostrarlo
             $error = 'Errore del sistema di autenticazione. Riprova più tardi.';
@@ -95,6 +128,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <?php endif; ?>
                 
                 <form method="POST" action="login.php">
+                    <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                     <div class="mb-3">
                         <label for="email" class="form-label">Email</label>
                         <input type="email" class="form-control" id="email" name="email" required>

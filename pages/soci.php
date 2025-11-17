@@ -253,7 +253,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $html .= "</body></html>";
 
                             $options = new Dompdf\Options();
-                            $options->set('isRemoteEnabled', true);
+                            // SECURITY FIX: Disable remote loading to prevent SSRF attacks
+                            $options->set('isRemoteEnabled', false);
                             $options->set('defaultFont', 'DejaVu Sans');
                             $dompdf = new Dompdf\Dompdf($options);
                             $dompdf->loadHtml($html, 'UTF-8');
