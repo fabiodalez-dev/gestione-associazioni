@@ -80,6 +80,22 @@
                     Utenti
                 </a>
             </li>
+            <?php if (in_array($_SESSION['user_role'] ?? '', ['admin', 'super_admin'])): ?>
+            <li class="nav-item">
+                <a class="nav-link <?php echo (isset($_GET['page']) && $_GET['page'] == 'user-approvals') ? 'active' : ''; ?>" href="index.php?page=user-approvals">
+                    <i class="bi bi-person-check me-2"></i>
+                    Approvazioni
+                    <?php
+                    try {
+                        $pending_count = $pdo->query("SELECT COUNT(*) FROM users WHERE status = 'pending'")->fetchColumn();
+                        if ($pending_count > 0): ?>
+                            <span class="badge bg-warning rounded-pill ms-1"><?php echo $pending_count; ?></span>
+                        <?php endif;
+                    } catch (Exception $e) {}
+                    ?>
+                </a>
+            </li>
+            <?php endif; ?>
             <?php 
             $role = $_SESSION['user_role'] ?? ''; 
             $has_assoc = !empty($_SESSION['associazione_id'] ?? null);
