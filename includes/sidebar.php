@@ -54,6 +54,13 @@
                     Documenti
                 </a>
             </li>
+            <li class="nav-item">
+                <a class="nav-link <?php echo (isset($_GET['page']) && $_GET['page'] == 'analytics') ? 'active' : ''; ?>" href="index.php?page=analytics">
+                    <i class="bi bi-graph-up me-2"></i>
+                    Analytics
+                    <span class="badge bg-gradient bg-primary rounded-pill ms-1">New</span>
+                </a>
+            </li>
         </ul>
 
         <h6 class="sidebar-heading d-flex justify-content-between align-items-center px-3 mt-4 mb-1 text-muted text-uppercase">

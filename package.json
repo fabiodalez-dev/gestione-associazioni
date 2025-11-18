@@ -6,9 +6,10 @@
   "scripts": {
     "build": "npm run build:css && npm run copy:assets",
     "build:css": "sass --no-source-map scss:assets/css",
-    "copy:assets": "npm run copy:bootstrap && npm run copy:icons",
+    "copy:assets": "npm run copy:bootstrap && npm run copy:icons && npm run copy:chartjs",
     "copy:bootstrap": "mkdir -p assets/css && mkdir -p assets/js && cp node_modules/bootstrap/dist/css/bootstrap.min.css assets/css/ && cp node_modules/bootstrap/dist/js/bootstrap.bundle.min.js assets/js/",
     "copy:icons": "mkdir -p assets/fonts && cp -r node_modules/bootstrap-icons/font/fonts/* assets/fonts/ && cp node_modules/bootstrap-icons/font/bootstrap-icons.min.css assets/css/",
+    "copy:chartjs": "mkdir -p assets/js && cp node_modules/chart.js/dist/chart.umd.js assets/js/chart.min.js",
     "watch": "sass --watch scss:assets/css",
     "dev": "npm run build && npm run watch"
   },
@@ -26,6 +27,7 @@
   "dependencies": {
     "bootstrap": "^5.3.2",
     "bootstrap-icons": "^1.11.1",
+    "chart.js": "^4.5.1",
     "sortablejs": "^1.15.0"
   }
 }
