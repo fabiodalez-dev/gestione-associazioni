@@ -1,1 +1,40 @@
+# Node modules
+node_modules/
+
+# NPM
+package-lock.json
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+*.cache
+
+# Uploads
+uploads/*
+!uploads/.gitkeep
+
+# Vendor (if using Composer)
+vendor/
+
+# Database
+*.sql.backup
+*.sql.gz
