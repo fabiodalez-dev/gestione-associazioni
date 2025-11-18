@@ -25,6 +25,11 @@ try {
 
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // CSRF Token Validation
+    if (!validateCSRFToken($_POST['csrf_token'] ?? '')) {
+        $message = 'Errore di sicurezza. Riprova.';
+        $messageType = 'danger';
+    } else {
     if (isset($_POST['delete_id'])) {
         // Delete verbale
         $deleteId = $_POST['delete_id'];
@@ -225,6 +230,7 @@ if (isset($_GET['edit'])) {
                                 </a>
                                 <?php if (!$verbale['approvato']): ?>
                                     <form method="POST" class="d-inline">
+        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                                         <input type="hidden" name="approve_id" value="<?php echo $verbale['id']; ?>">
                                         <button type="submit" class="btn btn-sm btn-outline-success" onclick="return confirm('Approvare questo verbale?')">
                                             <i class="bi bi-check"></i> Approva
@@ -232,6 +238,7 @@ if (isset($_GET['edit'])) {
                                     </form>
                                 <?php endif; ?>
                                 <form method="POST" class="d-inline" onsubmit="return confirm('Sei sicuro di voler eliminare questo verbale?')">
+        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                                     <input type="hidden" name="delete_id" value="<?php echo $verbale['id']; ?>">
                                     <button type="submit" class="btn btn-sm btn-outline-danger">
                                         <i class="bi bi-trash"></i> Elimina
@@ -298,6 +305,7 @@ if (isset($_GET['edit'])) {
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <form method="POST">
+        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                 <div class="modal-body">
                     <input type="hidden" name="id" value="<?php echo $editingVerbale['id'] ?? ''; ?>">
                     

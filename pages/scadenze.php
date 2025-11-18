@@ -23,6 +23,11 @@ try {
 
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // CSRF Token Validation
+    if (!validateCSRFToken($_POST['csrf_token'] ?? '')) {
+        $message = 'Errore di sicurezza. Riprova.';
+        $messageType = 'danger';
+    } else {
     if (isset($_POST['delete_id'])) {
         // Delete scadenza
         $deleteId = $_POST['delete_id'];
@@ -345,6 +350,7 @@ if (isset($_GET['edit'])) {
                             <td class="text-end">
                                 <?php if ($scadenza['stato'] === 'Attiva'): ?>
                                     <form method="POST" class="d-inline">
+        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                                         <input type="hidden" name="complete_id" value="<?php echo $scadenza['id']; ?>">
                                         <button type="submit" class="btn btn-sm btn-outline-success" onclick="return confirm('Marcare come completata?')">
                                             <i class="bi bi-check"></i> Completa
@@ -355,6 +361,7 @@ if (isset($_GET['edit'])) {
                                     <i class="bi bi-pencil"></i> Modifica
                                 </a>
                                 <form method="POST" class="d-inline" onsubmit="return confirm('Sei sicuro di voler eliminare questa scadenza?')">
+        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                                     <input type="hidden" name="delete_id" value="<?php echo $scadenza['id']; ?>">
                                     <button type="submit" class="btn btn-sm btn-outline-danger">
                                         <i class="bi bi-trash"></i> Elimina
@@ -378,6 +385,7 @@ if (isset($_GET['edit'])) {
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <form method="POST">
+        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                 <div class="modal-body">
                     <input type="hidden" name="id" value="<?php echo $editingScadenza['id'] ?? ''; ?>">
                     

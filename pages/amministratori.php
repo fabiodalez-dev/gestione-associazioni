@@ -4,6 +4,11 @@ include 'config.php';
 
 // Handle form submission for adding/editing administrators
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // CSRF Token Validation
+    if (!validateCSRFToken($_POST['csrf_token'] ?? '')) {
+        $message = 'Errore di sicurezza. Riprova.';
+        $messageType = 'danger';
+    } else {
     if (isset($_POST['delete_id'])) {
         // Delete administrator
         $deleteId = $_POST['delete_id'];
@@ -226,6 +231,7 @@ try {
                                     <i class="bi bi-pencil"></i> Modifica
                                 </a>
                                 <form method="POST" class="d-inline" onsubmit="return confirm('Sei sicuro di voler eliminare questo amministratore?')">
+        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                                     <input type="hidden" name="delete_id" value="<?php echo $admin['id']; ?>">
                                     <button type="submit" class="btn btn-sm btn-outline-danger">
                                         <i class="bi bi-trash"></i> Elimina
@@ -249,6 +255,7 @@ try {
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <form method="POST">
+        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                 <?php if ($editingUser): ?>
                     <input type="hidden" name="edit_admin" value="1">
                     <input type="hidden" name="id" value="<?php echo htmlspecialchars($editingUser['id']); ?>">

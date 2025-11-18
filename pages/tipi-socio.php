@@ -32,6 +32,11 @@ $messageType = '';
 
 // Gestione Azioni POST
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // CSRF Token Validation
+    if (!validateCSRFToken($_POST['csrf_token'] ?? '')) {
+        $message = 'Errore di sicurezza. Riprova.';
+        $messageType = 'danger';
+    } else {
     // Super admin: consenti assoc_id via POST per mantenere contesto
     if (($_SESSION['user_role'] ?? '') === 'super_admin' && isset($_POST['assoc_id'])) {
         $associazione_id = $_POST['assoc_id'];
@@ -152,6 +157,7 @@ if ($associazione_id) {
                     <td class="text-end">
                         <a href="index.php?page=tipi-socio&assoc_id=<?php echo urlencode($associazione_id); ?>&edit=<?php echo $tipo['id']; ?>" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil"></i></a>
                         <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questo tipo di socio?')">
+        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                             <input type="hidden" name="assoc_id" value="<?php echo htmlspecialchars($associazione_id); ?>">
                             <input type="hidden" name="delete_id" value="<?php echo $tipo['id']; ?>">
                             <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
@@ -169,6 +175,7 @@ if ($associazione_id) {
 <div class="modal-dialog"><div class="modal-content">
     <div class="modal-header"><h5 class="modal-title"><?php echo $editingType ? 'Modifica' : 'Nuovo'; ?> Tipo Socio</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
     <form method="POST">
+        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
         <div class="modal-body">
             <?php if ($_SESSION['user_role'] === 'super_admin'): ?>
                 <input type="hidden" name="assoc_id" value="<?php echo htmlspecialchars($associazione_id); ?>">

@@ -167,7 +167,8 @@ $campi = $stmt_campi->fetchAll();
                     <td><?php echo $campo['obbligatorio'] ? '<span class="badge bg-success">Sì</span>' : '<span class="badge bg-light text-dark">No</span>'; ?></td>
                     <td class="text-end">
                         <a href="index.php?page=config_campi&edit=<?php echo $campo['id']; ?>" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil"></i></a>
-                        <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questo campo? Verranno persi tutti i dati associati.')"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="delete_id" value="<?php echo $campo['id']; ?>"><button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button></form>
+                        <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questo campo? Verranno persi tutti i dati associati.')">
+        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="delete_id" value="<?php echo $campo['id']; ?>"><button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button></form>
                     </td>
                 </tr>
             <?php endforeach; ?>
@@ -181,6 +182,7 @@ $campi = $stmt_campi->fetchAll();
 <div class="modal-dialog"><div class="modal-content">
     <div class="modal-header"><h5 class="modal-title"><?php echo $editingField ? 'Modifica' : 'Nuovo'; ?> Campo</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
     <form method="POST">
+        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
         <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
         <div class="modal-body">
             <input type="hidden" name="id" value="<?php echo $editingField['id'] ?? ''; ?>">
@@ -228,6 +230,7 @@ $campi = $stmt_campi->fetchAll();
     <div class="modal-body">
         <p>Seleziona i campi che vuoi aggiungere all'anagrafica:</p>
         <form method="POST" id="presetForm">
+        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
             <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
             <input type="hidden" name="action" value="add_preset">
             <div class="row">

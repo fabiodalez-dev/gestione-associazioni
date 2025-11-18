@@ -138,6 +138,7 @@ $storico = $stmt_storico->fetchAll();
             <div class="card-header"><h5>Carica Nuovo Documento</h5></div>
             <div class="card-body">
                 <form method="POST" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                     <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                     <input type="hidden" name="action" value="upload_documento">
                     <div class="mb-3"><label>File</label><input type="file" name="file_documento" class="form-control" required></div>

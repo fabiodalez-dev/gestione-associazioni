@@ -92,6 +92,7 @@ try {
     </div>
     <div class="card-body">
         <form method="POST">
+        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
             <input type="hidden" name="send_communication" value="1">
             <div class="mb-3">
                 <label class="form-label">Oggetto</label>

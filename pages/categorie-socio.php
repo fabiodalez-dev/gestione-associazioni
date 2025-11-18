@@ -29,6 +29,11 @@ $messageType = '';
 
 // Gestione Azioni POST
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // CSRF Token Validation
+    if (!validateCSRFToken($_POST['csrf_token'] ?? '')) {
+        $message = 'Errore di sicurezza. Riprova.';
+        $messageType = 'danger';
+    } else {
     $id = $_POST['id'] ?? null;
     $nome = cleanInput($_POST['nome'] ?? '');
     $descrizione = cleanInput($_POST['descrizione'] ?? '');
@@ -139,7 +144,8 @@ if ($associazione_id) {
                     ?></td>
                     <td class="text-end">
                         <a href="index.php?page=categorie-socio&edit=<?php echo $cat['id']; ?>" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil"></i></a>
-                        <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questa categoria?')"><input type="hidden" name="delete_id" value="<?php echo $cat['id']; ?>"><button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button></form>
+                        <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questa categoria?')">
+        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="delete_id" value="<?php echo $cat['id']; ?>"><button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button></form>
                     </td>
                 </tr>
             <?php endforeach; ?>
@@ -153,6 +159,7 @@ if ($associazione_id) {
 <div class="modal-dialog"><div class="modal-content">
     <div class="modal-header"><h5 class="modal-title"><?php echo $editingCategory ? 'Modifica' : 'Nuova'; ?> Categoria</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
     <form method="POST">
+        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
         <div class="modal-body">
             <input type="hidden" name="id" value="<?php echo $editingCategory['id'] ?? ''; ?>">
             <div class="mb-3"><label>Nome</label><input type="text" name="nome" class="form-control" value="<?php echo escapeOutput($editingCategory['nome'] ?? ''); ?>" required></div>

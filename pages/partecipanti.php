@@ -42,6 +42,11 @@ try {
 
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // CSRF Token Validation
+    if (!validateCSRFToken($_POST['csrf_token'] ?? '')) {
+        $message = 'Errore di sicurezza. Riprova.';
+        $messageType = 'danger';
+    } else {
     if (isset($_POST['add_all_soci'])) {
         // Add all active soci to event
         try {
@@ -221,6 +226,7 @@ try {
         </button>
         <?php if (count($sociDisponibili) > 0): ?>
             <form method="POST" class="d-inline ms-2">
+        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                 <input type="hidden" name="add_all_soci" value="1">
                 <button type="submit" class="btn btn-outline-primary" onclick="return confirm('Aggiungere tutti i soci attivi a questo evento?')">
                     <i class="bi bi-people"></i> Aggiungi Tutti i Soci
@@ -304,6 +310,7 @@ try {
                                     <i class="bi bi-pencil"></i> Modifica
                                 </button>
                                 <form method="POST" class="d-inline" onsubmit="return confirm('Rimuovere questo partecipante?')">
+        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                                     <input type="hidden" name="remove_partecipante" value="<?php echo $partecipante['id']; ?>">
                                     <button type="submit" class="btn btn-sm btn-outline-danger">
                                         <i class="bi bi-trash"></i> Rimuovi
@@ -321,6 +328,7 @@ try {
                                         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                                     </div>
                                     <form method="POST">
+        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                                         <div class="modal-body">
                                             <input type="hidden" name="update_partecipazione" value="1">
                                             <input type="hidden" name="partecipante_id" value="<?php echo $partecipante['id']; ?>">
@@ -363,6 +371,7 @@ try {
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <form method="POST">
+        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                 <div class="modal-body">
                     <input type="hidden" name="add_socio" value="1">
                     

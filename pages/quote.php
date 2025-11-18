@@ -27,7 +27,11 @@ function getQuotaStatus($quota) {
 
 // Gestione Azioni POST
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (isset($_POST['delete_id'])) {
+    // CSRF Token Validation
+    if (!validateCSRFToken($_POST['csrf_token'] ?? '')) {
+        $message = 'Errore di sicurezza. Riprova.';
+        $messageType = 'danger';
+    } else if (isset($_POST['delete_id'])) {
         $stmt = $pdo->prepare("DELETE FROM quote WHERE id = ? AND associazione_id = ?");
         $stmt->execute([$_POST['delete_id'], $associazione_id ?? ($assoc_filter !== 'all' ? $assoc_filter : null)]);
         $message = "Quota eliminata con successo.";
@@ -67,6 +71,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         $messageType = "success";
     }
+    } // Close CSRF validation else
 }
 
 // Recupero Dati
@@ -199,7 +204,11 @@ $quote_filtrate = array_filter($all_quotes, function($q) use ($statusFilter) {
                     <a href="index.php?page=quote&pay=<?php echo $q['id']; ?>" class="btn btn-sm btn-outline-success"><i class="bi bi-check-lg"></i> Paga</a>
                     <?php endif; ?>
                     <a href="index.php?page=quote&edit=<?php echo $q['id']; ?>" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil"></i></a>
-                    <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questa quota?')"><input type="hidden" name="delete_id" value="<?php echo $q['id']; ?>"><button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button></form>
+                    <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questa quota?')">
+                        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
+                        <input type="hidden" name="delete_id" value="<?php echo $q['id']; ?>">
+                        <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                    </form>
                 </td>
             </tr>
         <?php endforeach; ?>
@@ -232,7 +241,11 @@ $quote_filtrate = array_filter($all_quotes, function($q) use ($statusFilter) {
                 <a href="index.php?page=quote&pay=<?php echo $q['id']; ?>" class="btn btn-sm btn-outline-success"><i class="bi bi-check-lg me-1"></i>Paga</a>
                 <?php endif; ?>
                 <a href="index.php?page=quote&edit=<?php echo $q['id']; ?>" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil me-1"></i>Modifica</a>
-                <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questa quota?')"><input type="hidden" name="delete_id" value="<?php echo $q['id']; ?>"><button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash me-1"></i>Elimina</button></form>
+                <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questa quota?')">
+                    <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
+                    <input type="hidden" name="delete_id" value="<?php echo $q['id']; ?>">
+                    <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash me-1"></i>Elimina</button>
+                </form>
             </div>
         </div>
         <?php endforeach; ?>
@@ -244,6 +257,7 @@ $quote_filtrate = array_filter($all_quotes, function($q) use ($statusFilter) {
 <div class="modal-dialog"><div class="modal-content">
     <div class="modal-header"><h5 class="modal-title"><?php echo $editingQuota ? 'Modifica' : 'Crea'; ?> Quota</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
     <form method="POST">
+        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
         <div class="modal-body">
             <input type="hidden" name="id" value="<?php echo $editingQuota['id'] ?? ''; ?>">
             <div class="mb-3"><label>Socio</label><select name="socio_id" class="form-select" required><?php foreach ($soci_attivi as $s): ?><option value="<?php echo $s['id']; ?>" <?php echo ($editingQuota['socio_id'] ?? '') == $s['id'] ? 'selected' : ''; ?>><?php echo htmlspecialchars($s['nome_completo']); ?></option><?php endforeach; ?></select></div>
@@ -265,6 +279,7 @@ $quote_filtrate = array_filter($all_quotes, function($q) use ($statusFilter) {
 <div class="modal-dialog"><div class="modal-content">
     <div class="modal-header"><h5 class="modal-title">Registra Pagamento</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
     <form method="POST">
+        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
         <div class="modal-body">
             <input type="hidden" name="pay_id" value="<?php echo $payingQuota['id']; ?>">
             <p><strong>Socio:</strong> <?php echo htmlspecialchars($payingQuota['cognome'] . ' ' . $payingQuota['nome']); ?></p>
