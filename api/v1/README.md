@@ -199,7 +199,172 @@ curl -X GET "https://your-domain.com/api/v1/soci.php?id=550e8400-e29b-41d4-a716-
 
 ---
 
-#### GET - Ricerca Soci
+### 1.1 Ricerca Specifica Soci (Nuovi Endpoint Diretti)
+
+Per semplificare l'integrazione, sono disponibili endpoint dedicati per cercare soci usando **un singolo campo specifico**. Questi endpoint restituiscono SEMPRE i dati completi dell'iscritto (anagrafica + tessera attiva + campi personalizzati + tags).
+
+#### GET - Cerca per Nome
+**Endpoint:** `GET /api/v1/soci-by-nome.php?nome={nome}`
+
+Cerca soci il cui nome contiene il valore specificato (LIKE).
+
+**Esempio:**
+```bash
+curl -X GET "https://your-domain.com/api/v1/soci-by-nome.php?nome=Mario" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+**Risposta:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "anagrafica": { ... },
+      "tessera_attiva": { ... },
+      "campi_personalizzati": [ ... ],
+      "tags": [ ... ]
+    }
+  ],
+  "total": 1,
+  "search_field": "nome",
+  "search_value": "Mario"
+}
+```
+
+---
+
+#### GET - Cerca per Cognome
+**Endpoint:** `GET /api/v1/soci-by-cognome.php?cognome={cognome}`
+
+Cerca soci il cui cognome contiene il valore specificato (LIKE).
+
+**Esempio:**
+```bash
+curl -X GET "https://your-domain.com/api/v1/soci-by-cognome.php?cognome=Rossi" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+---
+
+#### GET - Cerca per Codice Fiscale
+**Endpoint:** `GET /api/v1/soci-by-codice-fiscale.php?cf={codice_fiscale}`
+
+Cerca socio per codice fiscale (exact match). Restituisce UN SOLO risultato.
+
+**Esempio:**
+```bash
+curl -X GET "https://your-domain.com/api/v1/soci-by-codice-fiscale.php?cf=RSSMRA80A15H501U" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+**Risposta:**
+```json
+{
+  "success": true,
+  "data": {
+    "anagrafica": { ... },
+    "tessera_attiva": { ... },
+    "campi_personalizzati": [ ... ],
+    "tags": [ ... ]
+  },
+  "search_field": "codice_fiscale",
+  "search_value": "RSSMRA80A15H501U"
+}
+```
+
+---
+
+#### GET - Cerca per Numero Socio
+**Endpoint:** `GET /api/v1/soci-by-numero-socio.php?numero={numero_socio}`
+
+Cerca socio per numero socio (exact match). Restituisce UN SOLO risultato.
+
+**Esempio:**
+```bash
+curl -X GET "https://your-domain.com/api/v1/soci-by-numero-socio.php?numero=001" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+---
+
+#### GET - Cerca per Email
+**Endpoint:** `GET /api/v1/soci-by-email.php?email={email}`
+
+Cerca socio per email (exact match). Restituisce UN SOLO risultato.
+
+**Esempio:**
+```bash
+curl -X GET "https://your-domain.com/api/v1/soci-by-email.php?email=mario.rossi@example.com" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+---
+
+#### GET - Cerca per Telefono
+**Endpoint:** `GET /api/v1/soci-by-telefono.php?telefono={telefono}`
+
+Cerca soci il cui telefono contiene il valore specificato (LIKE).
+
+**Esempio:**
+```bash
+curl -X GET "https://your-domain.com/api/v1/soci-by-telefono.php?telefono=123456" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+---
+
+#### GET - Cerca per Numero Tessera
+**Endpoint:** `GET /api/v1/soci-by-numero-tessera.php?numero={numero_tessera}`
+
+Cerca socio tramite numero tessera (exact match). Restituisce UN SOLO risultato. **Ideale per scansione QR code.**
+
+**Esempio:**
+```bash
+curl -X GET "https://your-domain.com/api/v1/soci-by-numero-tessera.php?numero=2024-001" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+**Caso d'uso:** Scansione QR code su tessera associativa per verificare validità e dati socio.
+
+---
+
+#### GET - Lista Soci per Sede
+**Endpoint:** `GET /api/v1/soci-by-sede.php?sede_id={sede_id}`
+
+Lista tutti i soci di una specifica sede.
+
+**Esempio:**
+```bash
+curl -X GET "https://your-domain.com/api/v1/soci-by-sede.php?sede_id=sede-id-123" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+**Risposta:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "anagrafica": { ... },
+      "tessera_attiva": { ... },
+      "campi_personalizzati": [ ... ],
+      "tags": [ ... ]
+    }
+  ],
+  "total": 15,
+  "search_field": "sede_id",
+  "search_value": "sede-id-123",
+  "sede_info": {
+    "id": "sede-id-123",
+    "nome": "Milano Centro"
+  }
+}
+```
+
+---
+
+#### GET - Ricerca Soci (Multi-campo con Paginazione)
 Cerca soci per qualsiasi campo con filtri multipli e paginazione.
 
 **Endpoint:** `GET /api/v1/soci.php?action=search&{filters}`
