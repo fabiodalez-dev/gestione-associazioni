@@ -338,6 +338,7 @@ class SaaSInstaller {
                             <li>✓ Database MySQL multi-tenant</li>
                             <li>✓ Schema con UUID e isolamento dati</li>
                             <li>✓ Sistema di autenticazione sicuro</li>
+                            <li>✓ API RESTful protette da API key</li>
                         </ul>
                     </div>
                     <div class="col-md-6">
@@ -345,6 +346,7 @@ class SaaSInstaller {
                             <li>✓ Prima associazione e super admin</li>
                             <li>✓ Configurazioni di sicurezza</li>
                             <li>✓ Directory e permessi</li>
+                            <li>✓ Gestione soci, tessere e sedi</li>
                         </ul>
                     </div>
                 </div>
@@ -756,6 +758,7 @@ class SaaSInstaller {
                             <li>✓ Database multi-tenant creato</li>
                             <li>✓ Schema con UUID implementato</li>
                             <li>✓ Isolamento dati configurato</li>
+                            <li>✓ Tabella API keys pronta</li>
                         </ul>
                     </div>
                     <div class="col-md-6">
@@ -763,9 +766,35 @@ class SaaSInstaller {
                             <li>✓ Prima associazione creata</li>
                             <li>✓ Super amministratore configurato</li>
                             <li>✓ Directory e sicurezza impostati</li>
+                            <li>✓ API v1 endpoints disponibili</li>
                         </ul>
                     </div>
                 </div>
+            </div>
+
+            <div class="alert alert-info">
+                <h6><i class="bi bi-key"></i> API RESTful Disponibili:</h6>
+                <p class="mb-2">Il sistema include API protette da API key per integrazioni esterne:</p>
+                <ul class="mb-2">
+                    <li>Gestione soci (dati anagrafici, ricerca)</li>
+                    <li>Verifica tessere attive</li>
+                    <li>Informazioni sedi</li>
+                </ul>
+                <?php if (isset($data['test_api_key'])): ?>
+                    <div class="alert alert-success mb-2">
+                        <strong>🎉 API Key di Test Generata:</strong><br>
+                        <code style="font-size: 0.85em; word-break: break-all;"><?php echo htmlspecialchars($data['test_api_key']); ?></code><br>
+                        <small class="text-muted">Salva questa chiave in un luogo sicuro! Puoi usarla subito per testare le API.</small>
+                    </div>
+                    <p class="mb-2 small">
+                        <strong>Test API:</strong><br>
+                        <code>curl -X GET "<?php echo (isset($_SERVER['HTTPS']) ? 'https' : 'http') . '://' . $_SERVER['HTTP_HOST'] . dirname(dirname($_SERVER['REQUEST_URI'])); ?>/api/v1/soci.php?action=search&q=test" -H "Authorization: Bearer <?php echo htmlspecialchars($data['test_api_key']); ?>"</code>
+                    </p>
+                <?php endif; ?>
+                <p class="mb-0 small">
+                    <strong>Documentazione:</strong> <code>API_SETUP.md</code> e <code>api/v1/README.md</code><br>
+                    <strong>Genera nuove API key:</strong> <code>php api/generate_api_key.php --associazione_id="<?php echo htmlspecialchars($data['assoc_id'] ?? '{ID}'); ?>" --nome="Production API"</code>
+                </p>
             </div>
             
             <div class="alert alert-warning">
@@ -1090,7 +1119,10 @@ class SaaSInstaller {
             // Create first association
             $this->log_step('🏢 Creazione prima associazione...');
             $association_id = $this->create_association($pdo, $data);
-            
+
+            // Store association ID for completion page
+            $_SESSION['install_data']['assoc_id'] = $association_id;
+
             // Create super admin user
             $this->log_step('👤 Creazione super amministratore...');
             $this->create_admin_user($pdo, $data, $association_id);
@@ -1219,15 +1251,33 @@ class SaaSInstaller {
     }
     
     private function create_admin_user($pdo, $data, $association_id) {
+        // Create admin in 'users' table (used for authentication system)
+        $nome_completo = $data['admin_nome'] . ' ' . $data['admin_cognome'];
+
+        $stmt_users = $pdo->prepare("
+            INSERT INTO users (
+                username, email, password_hash, role, associazione_id
+            ) VALUES (?, ?, ?, 'super_admin', NULL)
+        ");
+
+        $stmt_users->execute([
+            strtolower(str_replace(' ', '', $data['admin_nome'] . $data['admin_cognome'])), // username
+            $data['admin_email'],
+            $data['admin_password']
+        ]);
+
+        $this->log_step('✅ Super admin creato nella tabella users');
+
+        // Also create admin in legacy 'utenti' table for compatibility
         $admin_id = generateUuid();
-        
-        $stmt = $pdo->prepare("
+
+        $stmt_utenti = $pdo->prepare("
             INSERT INTO utenti (
                 id, associazione_id, nome, cognome, email, password_hash, ruolo, attivo
             ) VALUES (?, ?, ?, ?, ?, ?, 'super_admin', 1)
         ");
-        
-        $stmt->execute([
+
+        $stmt_utenti->execute([
             $admin_id,
             $association_id,
             $data['admin_nome'],
@@ -1235,6 +1285,8 @@ class SaaSInstaller {
             $data['admin_email'],
             $data['admin_password']
         ]);
+
+        $this->log_step('✅ Super admin creato nella tabella utenti (legacy)');
     }
     
     private function create_saas_config_file($data) {
@@ -1344,6 +1396,28 @@ class SaaSInstaller {
                 $default_tpl = "Il/La sottoscritto/a {NOME_COMPLETO}, tessera n. {NUMERO_TESSERA}, è iscritto/a all'associazione {ASSOCIAZIONE_NOME} per l'anno {ANNO_VALIDITA}.";
                 $ins = $pdo->prepare("INSERT INTO tessera_templates (id, associazione_id, tipo_socio_id, titolo, contenuto, attivo) VALUES (?, ?, NULL, 'Template Tessera', ?, 1)");
                 $ins->execute([$tpl_id, $association_id, $default_tpl]);
+            }
+        } catch (PDOException $e) {
+            // ignore if table missing or insert fails
+        }
+
+        // Create default API key for testing (optional)
+        try {
+            $check = $pdo->query("SHOW TABLES LIKE 'api_keys'");
+            if ($check && $check->rowCount() > 0) {
+                $api_key_id = generateUuid();
+                $default_api_key = bin2hex(random_bytes(32)); // Generate secure API key
+                $ins = $pdo->prepare("
+                    INSERT INTO api_keys (
+                        id, associazione_id, nome, api_key, descrizione, attiva, permessi
+                    ) VALUES (?, ?, 'Test API Key', ?, 'API key di test creata durante l\'installazione', 1, ?)
+                ");
+                $permessi = json_encode(['soci' => true, 'tessere' => true, 'sedi' => true]);
+                $ins->execute([$api_key_id, $association_id, $default_api_key, $permessi]);
+
+                // Store API key in session for completion page
+                $_SESSION['install_data']['test_api_key'] = $default_api_key;
+                $this->log_step('🔑 API key di test generata');
             }
         } catch (PDOException $e) {
             // ignore if table missing or insert fails
