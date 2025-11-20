@@ -2,6 +2,7 @@
 
 -- Drop tables if they exist (for clean re-creation during development)
 -- Order matters due to foreign key constraints
+DROP TABLE IF EXISTS api_keys;
 DROP TABLE IF EXISTS gruppi_dinamici;
 DROP TABLE IF EXISTS documenti_socio;
 DROP TABLE IF EXISTS storico_attivita_socio;
@@ -349,6 +350,23 @@ CREATE TABLE gruppi_dinamici (
     FOREIGN KEY (associazione_id) REFERENCES associazioni(id) ON DELETE CASCADE
 );
 
+-- Tabella API Keys per autenticazione delle API esterne
+CREATE TABLE api_keys (
+    id CHAR(36) PRIMARY KEY,
+    associazione_id CHAR(36) NOT NULL,
+    nome VARCHAR(255) NOT NULL,
+    api_key VARCHAR(64) UNIQUE NOT NULL,
+    descrizione TEXT,
+    attiva BOOLEAN DEFAULT TRUE,
+    scadenza DATE NULL,
+    ultimo_utilizzo DATETIME NULL,
+    ip_whitelist TEXT NULL COMMENT 'JSON array of allowed IPs',
+    permessi JSON NULL COMMENT 'JSON object with permissions: {"soci": true, "tessere": true, "sedi": true}',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (associazione_id) REFERENCES associazioni(id) ON DELETE CASCADE
+);
+
 -- Indici per migliorare le performance delle query
 CREATE INDEX idx_utenti_associazione_id ON utenti(associazione_id);
 CREATE INDEX idx_sedi_associazione_id ON sedi(associazione_id);
@@ -367,6 +385,8 @@ CREATE INDEX idx_socio_tags_socio_id ON socio_tags(socio_id);
 CREATE INDEX idx_storico_attivita_socio_socio_id ON storico_attivita_socio(socio_id);
 CREATE INDEX idx_documenti_socio_socio_id ON documenti_socio(socio_id);
 CREATE INDEX idx_gruppi_dinamici_associazione_id ON gruppi_dinamici(associazione_id);
+CREATE INDEX idx_api_keys_associazione_id ON api_keys(associazione_id);
+CREATE INDEX idx_api_keys_key_active ON api_keys(api_key, attiva);
 
 -- Note: Trigger MySQL rimossi per compatibilità con installer PHP
 -- I timestamp updated_at sono gestiti via "ON UPDATE CURRENT_TIMESTAMP" nelle definizioni delle tabelle
@@ -393,3 +413,4 @@ CREATE TABLE migrations (
 
 -- Marca lo schema come inizializzato
 INSERT INTO migrations (migration_name) VALUES ('initial_schema_v2_multitenant');
+INSERT INTO migrations (migration_name) VALUES ('001_add_api_keys');
