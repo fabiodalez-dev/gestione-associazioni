@@ -1,0 +1,59 @@
+# API Directory Security Configuration
+
+# Enable RewriteEngine
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+</IfModule>
+
+# Security Headers
+<IfModule mod_headers.c>
+    # Prevent clickjacking
+    Header always set X-Frame-Options "DENY"
+
+    # XSS Protection
+    Header always set X-XSS-Protection "1; mode=block"
+
+    # Prevent MIME sniffing
+    Header always set X-Content-Type-Options "nosniff"
+
+    # Referrer Policy
+    Header always set Referrer-Policy "no-referrer-when-downgrade"
+
+    # Remove X-Powered-By header
+    Header unset X-Powered-By
+
+    # CORS Headers (modify as needed for your domain)
+    Header always set Access-Control-Allow-Methods "GET, OPTIONS"
+    Header always set Access-Control-Allow-Headers "Authorization, X-API-Key, Content-Type"
+</IfModule>
+
+# Deny access to sensitive files
+<FilesMatch "^(auth\.php|generate_api_key\.php)$">
+    # Allow access only from localhost for utility scripts
+    # Comment out these lines if you need external access
+    Order Deny,Allow
+    Deny from all
+    Allow from 127.0.0.1
+    Allow from ::1
+</FilesMatch>
+
+# Disable directory browsing
+Options -Indexes
+
+# Protect against common attacks
+<IfModule mod_rewrite.c>
+    # Block SQL injection attempts
+    RewriteCond %{QUERY_STRING} (\<|%3C).*script.*(\>|%3E) [NC,OR]
+    RewriteCond %{QUERY_STRING} GLOBALS(=|\[|\%[0-9A-Z]{0,2}) [OR]
+    RewriteCond %{QUERY_STRING} _REQUEST(=|\[|\%[0-9A-Z]{0,2})
+    RewriteRule ^(.*)$ - [F,L]
+</IfModule>
+
+# UTF-8 encoding
+AddDefaultCharset UTF-8
+
+# Compress responses
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE application/json
+    AddOutputFilterByType DEFLATE text/plain
+</IfModule>
