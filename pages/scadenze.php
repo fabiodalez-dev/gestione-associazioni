@@ -299,7 +299,7 @@ if (isset($_GET['edit'])) {
                                     <?php if ($scadenza['stato'] === 'Attiva'): ?>
                                         <?php if ($giorni < 0): ?>
                                             <span class="text-danger">Scaduta da <?php echo abs($giorni); ?> giorni</span>
-                                        <?php elseif ($giorni === 0): ?>
+                                        <?php elseif ($giorni == 0): ?>
                                             <span class="text-warning">Scade oggi</span>
                                         <?php elseif ($giorni <= $scadenza['promemoria_giorni']): ?>
                                             <span class="text-warning">Scade tra <?php echo $giorni; ?> giorni</span>

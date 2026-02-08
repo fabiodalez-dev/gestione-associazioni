@@ -59,6 +59,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmt = $pdo->prepare($sql);
                     $stmt->execute($params);
                     $assoc_id = $id;
+                    $message = 'Associazione aggiornata con successo.';
+                    $messageType = 'success';
 
                     // Upload logo se presente
                     if (!empty($_FILES['logo_file']['name'] ?? '')) {
@@ -71,11 +73,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 $pdo->prepare("UPDATE associazioni SET logo_url = ? WHERE id = ?")->execute([$relative, $assoc_id]);
                             } else {
                                 $message .= ' (Logo non salvato)';
-                                $messageType = $messageType ?: 'warning';
+                                $messageType = 'warning';
                             }
                         } else {
                             $message .= ' (Logo non valido: ' . implode(' | ', $errors) . ')';
-                            $messageType = $messageType ?: 'warning';
+                            $messageType = 'warning';
                         }
                     }
 
@@ -90,7 +92,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $pdo->prepare("UPDATE users SET associazione_id = ?, role = 'admin_associazione' WHERE id = ?")->execute([$assoc_id, $userId]);
                         } else {
                             $message .= ' (Admin non collegato: utente non valido)';
-                            $messageType = $messageType ?: 'warning';
+                            $messageType = 'warning';
                         }
                     }
                     // Clonazione su associazione esistente (server-side)
@@ -169,6 +171,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ];
                     $stmt = $pdo->prepare($sql);
                     $stmt->execute($params);
+                    $message = 'Associazione creata con successo.';
+                    $messageType = 'success';
 
                     // Upload logo se presente
                     if (!empty($_FILES['logo_file']['name'] ?? '')) {
@@ -181,11 +185,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 $pdo->prepare("UPDATE associazioni SET logo_url = ? WHERE id = ?")->execute([$relative, $assoc_id]);
                             } else {
                                 $message .= ' (Logo non salvato)';
-                                $messageType = $messageType ?: 'warning';
+                                $messageType = 'warning';
                             }
                         } else {
                             $message .= ' (Logo non valido: ' . implode(' | ', $errors) . ')';
-                            $messageType = $messageType ?: 'warning';
+                            $messageType = 'warning';
                         }
                     }
 
@@ -199,7 +203,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $pdo->prepare("UPDATE users SET associazione_id = ?, role = 'admin_associazione' WHERE id = ?")->execute([$assoc_id, $userId]);
                         } else {
                             $message .= ' (Admin esistente non collegato: non valido o già collegato)';
-                            $messageType = $messageType ?: 'warning';
+                            $messageType = 'warning';
                         }
                     }
 
@@ -298,9 +302,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 }
                             }
                     }
-
-                    $message = 'Associazione creata.';
-                    $messageType = $messageType ?: 'success';
                 }
             }
     }

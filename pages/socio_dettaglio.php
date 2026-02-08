@@ -128,7 +128,7 @@ $storico = $stmt_storico->fetchAll();
         $stmt_cost = $pdo->prepare("SELECT ts.costo_tessera as tipo_costo, a.costo_tessera as assoc_costo FROM soci s LEFT JOIN tipi_socio ts ON s.tipo_socio_id = ts.id LEFT JOIN associazioni a ON s.associazione_id = a.id WHERE s.id = ? AND s.associazione_id = ? LIMIT 1");
         $stmt_cost->execute([$socio_id, $associazione_id]);
         $costRow = $stmt_cost->fetch() ?: [];
-        $baseCost = isset($costRow['tipo_costo']) && $costRow['tipo_costo'] !== null ? (float)$costRow['tipo_costo'] : (isset($costRow['assoc_costo']) && $costRow['assoc_costo'] !== null ? (float)$costRow['assoc_costo'] : null);
+        $baseCost = isset($costRow['tipo_costo']) ? (float)$costRow['tipo_costo'] : (isset($costRow['assoc_costo']) ? (float)$costRow['assoc_costo'] : null);
         foreach($tessere as $t): ?><tr><td><?php echo $t['numero_tessera']; ?></td><td><?php echo $t['anno_validita']; ?></td><td><?php echo date('d/m/Y', strtotime($t['data_scadenza'])); ?></td><td><?php echo $t['stato']; ?></td><td><?php echo $baseCost !== null ? '€ ' . number_format($baseCost, 2, ',', '.') : '—'; ?></td></tr><?php endforeach; ?>
         </tbody></table></div></div>
     </div>

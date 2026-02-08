@@ -120,10 +120,6 @@ if ($associazione_id) {
     <?php return; // Stop here if no association selected ?>
 <?php endif; ?>
 
-<?php if ($message): ?>
-<div class="alert alert-<?php echo $messageType; ?>"><?php echo $message; ?></div>
-<?php endif; ?>
-
 <div class="d-flex justify-content-between mb-3">
     <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#typeModal"><i class="bi bi-plus-lg"></i> Nuovo Tipo Socio</button>
     <?php if ($_SESSION['user_role'] === 'super_admin' && $associazione_id): ?>
@@ -148,7 +144,7 @@ if ($associazione_id) {
                         echo htmlspecialchars($desc, ENT_QUOTES | ENT_HTML5, 'UTF-8');
                         ?>
                     </td>
-                    <td><?php echo (isset($tipo['costo_tessera']) && $tipo['costo_tessera'] !== null) ? '€ ' . number_format((float)$tipo['costo_tessera'], 2, ',', '.') : '<span class="text-muted">—</span>'; ?></td>
+                    <td><?php echo isset($tipo['costo_tessera']) ? '€ ' . number_format((float)$tipo['costo_tessera'], 2, ',', '.') : '<span class="text-muted">—</span>'; ?></td>
                     <td class="text-end">
                         <a href="index.php?page=tipi-socio&assoc_id=<?php echo urlencode($associazione_id); ?>&edit=<?php echo $tipo['id']; ?>" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil"></i></a>
                         <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questo tipo di socio?')">
