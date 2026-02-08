@@ -454,6 +454,27 @@ if (!function_exists('showAnimatedNotification')) {
 }
 
 /**
+ * Formatta una data in formato italiano
+ * @param string|null $date Data in formato YYYY-MM-DD o timestamp
+ * @param string $format Formato di output (default: d/m/Y)
+ * @return string Data formattata o stringa vuota
+ */
+if (!function_exists('formatDate')) {
+    function formatDate($date, $format = 'd/m/Y') {
+        if (empty($date)) {
+            return '';
+        }
+
+        try {
+            $dateTime = new DateTime($date);
+            return $dateTime->format($format);
+        } catch (Exception $e) {
+            return '';
+        }
+    }
+}
+
+/**
  * Assicura la directory dei loghi
  */
 if (!is_dir(UPLOADS_PATH . '/logos')) {

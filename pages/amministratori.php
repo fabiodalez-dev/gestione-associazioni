@@ -7,15 +7,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['delete_id'])) {
         // Delete administrator
         $deleteId = $_POST['delete_id'];
-        try {
-            // In a real application, we would delete from a users table
-            // For now, we'll just show a success message
-            $message = "Amministratore eliminato con successo!";
-            $messageType = "success";
-        } catch (Exception $e) {
-            $message = "Errore durante l'eliminazione: " . $e->getMessage();
-            $messageType = "error";
-        }
+        // In a real application, we would delete from a users table
+        // For now, we'll just show a success message
+        $message = "Amministratore eliminato con successo!";
+        $messageType = "success";
     } elseif (isset($_POST['add_admin'])) {
         // Add administrator
         $username = sanitizeInput($_POST['username']);

@@ -1,0 +1,19 @@
+parameters:
+    level: 4
+    paths:
+        - auth
+        - pages
+        - config.php
+        - index.php
+    excludePaths:
+        - vendor
+        - uploads
+        - stubs
+    bootstrapFiles:
+        - phpstan-bootstrap.php
+    treatPhpDocTypesAsCertain: false
+    ignoreErrors:
+        # $pdo è definito globalmente in config.php tramite require_once
+        - '#Variable \$pdo might not be defined\.#'
+        # $messageType viene inizializzato condizionalmente, ma sempre definito prima dell'uso
+        - '#Variable \$messageType might not be defined\.#'

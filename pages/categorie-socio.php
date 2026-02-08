@@ -111,10 +111,6 @@ if ($associazione_id) {
     <?php return; // Stop here if no association selected ?>
 <?php endif; ?>
 
-<?php if ($message): ?>
-<div class="alert alert-<?php echo $messageType; ?>"><?php echo $message; ?></div>
-<?php endif; ?>
-
 <div class="d-flex justify-content-between mb-3">
     <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#categoryModal"><i class="bi bi-plus-lg"></i> Nuova Categoria</button>
     <?php if ($_SESSION['user_role'] === 'super_admin' && $associazione_id): ?>

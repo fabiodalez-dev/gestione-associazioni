@@ -307,31 +307,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmt_ins_tag->execute([$socio_id, cleanInput($tag_id)]);
                 }
             }
-            $message = $id ? "Socio aggiornato." : "Socio creato.";
-            $messageType = "success";
-            
-            // Always redirect after successful save to avoid form resubmission
-            header('Location: index.php?page=soci');
-            exit;
-            
-
-                        $ins = $pdo->prepare("INSERT INTO tessere (id, socio_id, associazione_id, numero_tessera, anno_validita, data_emissione, data_scadenza, tipo_scadenza, stato, template_tessera) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Attiva', ?)");
-                        $ins->execute([generateUuid(), $socio_id, $associazione_id, $numero_tessera, $anno_corrente, $data_emissione, $data_scadenza, $tipo_scadenza, $template_tessera]);
-                        $message .= " Tessera creata automaticamente con numero $numero_tessera.";
-                    }
-                } catch (Exception $e) {
-                    // Non bloccare il salvataggio del socio se la tessera fallisce
-                    error_log('Auto tessera creation failed: ' . $e->getMessage());
-                }
         }
         $pdo->commit();
-        $message = $id ? "Socio aggiornato." : "Socio creato.";
-        $messageType = "success";
-        
-        // Always redirect after successful save to avoid form resubmission
-        header('Location: index.php?page=soci');
-        exit;
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            $message = "Errore: " . $e->getMessage();
+            $messageType = "danger";
+            error_log("Error saving socio: " . $e->getMessage());
+        }
+
+        if ($messageType === 'success') {
+            header('Location: index.php?page=soci');
+            exit;
+        }
 SKIP_POST_SAVE:
+    }
 }
 
 // Recupero Dati per la visualizzazione
@@ -408,7 +398,18 @@ try {
     $presets = $stmt_presets->fetchAll();
 } catch (PDOException $e) { /* tabelle non presenti o errore, ignora */ }
 
-// Carica preset se richiesto
+// Inizializza filtri da $_GET (valori di default)
+$searchTerm = $_GET['search'] ?? '';
+$statusFilter = $_GET['status'] ?? 'all';
+$gruppo_id_filter = $_GET['gruppo_id'] ?? 'all';
+$sede_filter = $_GET['sede_id'] ?? 'all';
+$categoria_filters = isset($_GET['categoria_ids']) ? array_filter((array)$_GET['categoria_ids']) : [];
+$has_tessera_filter = $_GET['has_tessera'] ?? 'all';
+$tessera_stato_filter = $_GET['tessera_stato'] ?? 'attive';
+$tessera_template_filter = $_GET['tessera_template'] ?? 'all';
+$tessera_scadenza_filter = $_GET['tessera_scadenza'] ?? 'all';
+
+// Sovrascrivi con preset se richiesto
 if (isset($_GET['preset_id'])) {
     try {
         if ($lists_assoc_id) {
@@ -432,20 +433,6 @@ if (isset($_GET['preset_id'])) {
         }
     } catch (PDOException $e) {}
 }
-
-$searchTerm = $_GET['search'] ?? '';
-$statusFilter = $_GET['status'] ?? 'all';
-$gruppo_id_filter = $_GET['gruppo_id'] ?? 'all';
-// Filtri: sede (dropdown singolo) e categorie (multi-select)
-$sede_filter = $_GET['sede_id'] ?? 'all';
-$categoria_filters = isset($_GET['categoria_ids']) ? array_filter((array)$_GET['categoria_ids']) : [];
-// Ha tessera (all/yes/no)
-$has_tessera_filter = $_GET['has_tessera'] ?? 'all';
-// Stato tessera: attive (default) / scadute / all
-$tessera_stato_filter = $_GET['tessera_stato'] ?? 'attive';
-// Nuovi filtri tessera
-$tessera_template_filter = $_GET['tessera_template'] ?? 'all';
-$tessera_scadenza_filter = $_GET['tessera_scadenza'] ?? 'all';
 
 if ($gruppo_id_filter !== 'all') {
     $stmt_filtro = $pdo->prepare("SELECT filtri_json FROM gruppi_dinamici WHERE id = ? AND associazione_id = ?");
