@@ -1,52 +1,44 @@
 <?php
-// pages/verbali.php
-include 'config.php';
+// pages/verbali.php - v2.0 (SaaS multi-tenant)
 
-// Create verbali table if not exists
-try {
-    $pdo->exec("CREATE TABLE IF NOT EXISTS verbali (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        titolo VARCHAR(255) NOT NULL,
-        data_riunione DATE NOT NULL,
-        tipo_riunione ENUM('Assemblea Ordinaria', 'Assemblea Straordinaria', 'Consiglio Direttivo', 'Commissione') NOT NULL,
-        presenti TEXT,
-        ordine_del_giorno TEXT,
-        deliberazioni TEXT,
-        allegati VARCHAR(500),
-        approvato BOOLEAN DEFAULT FALSE,
-        approvato_da INT,
-        data_approvazione DATE,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    )");
-} catch (PDOException $e) {
-    // Table might already exist
+if (!isUserLoggedIn() || !isset($_SESSION['associazione_id'])) {
+    redirect('auth/login.php');
 }
+
+$associazione_id = $_SESSION['associazione_id'];
+$message = '';
+$messageType = '';
 
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (isset($_POST['delete_id'])) {
+    // Verify CSRF token
+    if (!validateCSRFToken($_POST['csrf_token'] ?? '')) {
+        $message = "Errore di sicurezza: token CSRF non valido.";
+        $messageType = "danger";
+    } elseif (isset($_POST['delete_id'])) {
         // Delete verbale
         $deleteId = $_POST['delete_id'];
         try {
-            $stmt = $pdo->prepare("DELETE FROM verbali WHERE id = ?");
-            $stmt->execute([$deleteId]);
+            $stmt = $pdo->prepare("DELETE FROM verbali WHERE id = ? AND associazione_id = ?");
+            $stmt->execute([$deleteId, $associazione_id]);
             $message = "Verbale eliminato con successo!";
             $messageType = "success";
         } catch (PDOException $e) {
-            $message = "Errore durante l'eliminazione: " . $e->getMessage();
+            error_log('verbali.php delete: ' . $e->getMessage());
+            $message = "Errore durante l'eliminazione. Riprova.";
             $messageType = "error";
         }
     } elseif (isset($_POST['approve_id'])) {
         // Approve verbale
         $approveId = $_POST['approve_id'];
         try {
-            $stmt = $pdo->prepare("UPDATE verbali SET approvato = 1, approvato_da = ?, data_approvazione = CURDATE() WHERE id = ?");
-            $stmt->execute([$_SESSION['user_id'], $approveId]);
+            $stmt = $pdo->prepare("UPDATE verbali SET approvato = 1, approvato_da = ?, data_approvazione = CURDATE() WHERE id = ? AND associazione_id = ?");
+            $stmt->execute([$_SESSION['user_id'], $approveId, $associazione_id]);
             $message = "Verbale approvato con successo!";
             $messageType = "success";
         } catch (PDOException $e) {
-            $message = "Errore durante l'approvazione: " . $e->getMessage();
+            error_log('verbali.php approve: ' . $e->getMessage());
+            $message = "Errore durante l'approvazione. Riprova.";
             $messageType = "error";
         }
     } else {
@@ -58,22 +50,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $presenti = sanitizeInput($_POST['presenti']);
         $ordine_del_giorno = sanitizeInput($_POST['ordine_del_giorno']);
         $deliberazioni = sanitizeInput($_POST['deliberazioni']);
-        
+
         try {
             if ($id) {
                 // Update existing verbale
-                $stmt = $pdo->prepare("UPDATE verbali SET titolo = ?, data_riunione = ?, tipo_riunione = ?, presenti = ?, ordine_del_giorno = ?, deliberazioni = ?, updated_at = NOW() WHERE id = ?");
-                $stmt->execute([$titolo, $data_riunione, $tipo_riunione, $presenti, $ordine_del_giorno, $deliberazioni, $id]);
+                $stmt = $pdo->prepare("UPDATE verbali SET titolo = ?, data_riunione = ?, tipo_riunione = ?, presenti = ?, ordine_del_giorno = ?, deliberazioni = ?, updated_at = NOW() WHERE id = ? AND associazione_id = ?");
+                $stmt->execute([$titolo, $data_riunione, $tipo_riunione, $presenti, $ordine_del_giorno, $deliberazioni, $id, $associazione_id]);
                 $message = "Verbale aggiornato con successo!";
             } else {
                 // Insert new verbale
-                $stmt = $pdo->prepare("INSERT INTO verbali (titolo, data_riunione, tipo_riunione, presenti, ordine_del_giorno, deliberazioni, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())");
-                $stmt->execute([$titolo, $data_riunione, $tipo_riunione, $presenti, $ordine_del_giorno, $deliberazioni]);
+                $new_id = generateUuid();
+                $stmt = $pdo->prepare("INSERT INTO verbali (id, associazione_id, titolo, data_riunione, tipo_riunione, presenti, ordine_del_giorno, deliberazioni, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())");
+                $stmt->execute([$new_id, $associazione_id, $titolo, $data_riunione, $tipo_riunione, $presenti, $ordine_del_giorno, $deliberazioni]);
                 $message = "Verbale aggiunto con successo!";
             }
             $messageType = "success";
         } catch (PDOException $e) {
-            $message = "Errore durante il salvataggio: " . $e->getMessage();
+            error_log('verbali.php save: ' . $e->getMessage());
+            $message = "Errore durante il salvataggio. Riprova.";
             $messageType = "error";
         }
     }
@@ -83,40 +77,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 try {
     $searchTerm = $_GET['search'] ?? '';
     $typeFilter = $_GET['type'] ?? 'all';
-    
-    $sql = "SELECT v.*, u.username as approvato_username FROM verbali v 
-            LEFT JOIN users u ON v.approvato_da = u.id 
-            WHERE 1=1";
-    $params = [];
-    
+
+    $sql = "SELECT v.*, CONCAT(u.nome, ' ', u.cognome) as approvato_username FROM verbali v
+            LEFT JOIN utenti u ON v.approvato_da = u.id
+            WHERE v.associazione_id = ?";
+    $params = [$associazione_id];
+
     if ($searchTerm) {
         $sql .= " AND (v.titolo LIKE ? OR v.presenti LIKE ?)";
         $params = array_merge($params, ["%$searchTerm%", "%$searchTerm%"]);
     }
-    
+
     if ($typeFilter !== 'all') {
         $sql .= " AND v.tipo_riunione = ?";
         $params[] = $typeFilter;
     }
-    
+
     $sql .= " ORDER BY v.data_riunione DESC";
-    
+
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
     $verbali = $stmt->fetchAll();
 } catch (PDOException $e) {
-    die("Error fetching verbali: " . $e->getMessage());
+    error_log('verbali.php fetch: ' . $e->getMessage());
+    die("Errore nel recupero dati. Riprova più tardi.");
 }
 
 // Get verbale for editing
 $editingVerbale = null;
 if (isset($_GET['edit'])) {
     try {
-        $stmt = $pdo->prepare("SELECT * FROM verbali WHERE id = ?");
-        $stmt->execute([$_GET['edit']]);
+        $stmt = $pdo->prepare("SELECT * FROM verbali WHERE id = ? AND associazione_id = ?");
+        $stmt->execute([$_GET['edit'], $associazione_id]);
         $editingVerbale = $stmt->fetch();
     } catch (PDOException $e) {
-        $message = "Errore durante il caricamento del verbale: " . $e->getMessage();
+        error_log('verbali.php edit fetch: ' . $e->getMessage());
+        $message = "Errore durante il caricamento del verbale. Riprova.";
         $messageType = "error";
     }
 }
@@ -127,9 +123,9 @@ if (isset($_GET['edit'])) {
     <p class="text-muted">Gestisci i verbali delle riunioni e assemblee</p>
 </div>
 
-<?php if (isset($message)): ?>
+<?php if ($message !== ''): ?>
     <div class="alert alert-<?php echo $messageType === 'success' ? 'success' : 'danger'; ?> alert-dismissible fade show" role="alert">
-        <?php echo $message; ?>
+        <?php echo htmlspecialchars($message); ?>
         <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
     </div>
 <?php endif; ?>
@@ -150,7 +146,7 @@ if (isset($_GET['edit'])) {
             <input type="hidden" name="page" value="verbali">
             <div class="input-group">
                 <input type="text" class="form-control" placeholder="Cerca per titolo o partecipanti..." name="search" value="<?php echo htmlspecialchars($searchTerm); ?>">
-                <button class="btn btn-outline-secondary" type="submit">Cerca</button>
+                <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i></button>
             </div>
         </form>
     </div>
@@ -225,6 +221,7 @@ if (isset($_GET['edit'])) {
                                 </a>
                                 <?php if (!$verbale['approvato']): ?>
                                     <form method="POST" class="d-inline">
+                                        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                                         <input type="hidden" name="approve_id" value="<?php echo $verbale['id']; ?>">
                                         <button type="submit" class="btn btn-sm btn-outline-success" onclick="return confirm('Approvare questo verbale?')">
                                             <i class="bi bi-check"></i> Approva
@@ -232,6 +229,7 @@ if (isset($_GET['edit'])) {
                                     </form>
                                 <?php endif; ?>
                                 <form method="POST" class="d-inline" onsubmit="return confirm('Sei sicuro di voler eliminare questo verbale?')">
+                                    <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                                     <input type="hidden" name="delete_id" value="<?php echo $verbale['id']; ?>">
                                     <button type="submit" class="btn btn-sm btn-outline-danger">
                                         <i class="bi bi-trash"></i> Elimina
@@ -239,7 +237,7 @@ if (isset($_GET['edit'])) {
                                 </form>
                             </td>
                         </tr>
-                        
+
                         <!-- View Modal for each verbale -->
                         <div class="modal fade" id="viewModal<?php echo $verbale['id']; ?>" tabindex="-1">
                             <div class="modal-dialog modal-lg">
@@ -257,17 +255,17 @@ if (isset($_GET['edit'])) {
                                                 <strong>Tipo:</strong> <?php echo htmlspecialchars($verbale['tipo_riunione']); ?>
                                             </div>
                                         </div>
-                                        
+
                                         <div class="mb-3">
                                             <strong>Partecipanti:</strong>
                                             <p class="mt-1"><?php echo nl2br(htmlspecialchars($verbale['presenti'])); ?></p>
                                         </div>
-                                        
+
                                         <div class="mb-3">
                                             <strong>Ordine del Giorno:</strong>
                                             <p class="mt-1"><?php echo nl2br(htmlspecialchars($verbale['ordine_del_giorno'])); ?></p>
                                         </div>
-                                        
+
                                         <div class="mb-3">
                                             <strong>Deliberazioni:</strong>
                                             <p class="mt-1"><?php echo nl2br(htmlspecialchars($verbale['deliberazioni'])); ?></p>
@@ -299,8 +297,9 @@ if (isset($_GET['edit'])) {
             </div>
             <form method="POST">
                 <div class="modal-body">
+                    <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                     <input type="hidden" name="id" value="<?php echo $editingVerbale['id'] ?? ''; ?>">
-                    
+
                     <div class="row">
                         <div class="col-md-8 mb-3">
                             <label class="form-label">Titolo</label>
@@ -311,7 +310,7 @@ if (isset($_GET['edit'])) {
                             <input type="date" class="form-control" name="data_riunione" value="<?php echo htmlspecialchars($editingVerbale['data_riunione'] ?? ''); ?>" required>
                         </div>
                     </div>
-                    
+
                     <div class="mb-3">
                         <label class="form-label">Tipo Riunione</label>
                         <select class="form-select" name="tipo_riunione" required>
@@ -322,17 +321,17 @@ if (isset($_GET['edit'])) {
                             <option value="Commissione" <?php echo ($editingVerbale && $editingVerbale['tipo_riunione'] === 'Commissione') ? 'selected' : ''; ?>>Commissione</option>
                         </select>
                     </div>
-                    
+
                     <div class="mb-3">
                         <label class="form-label">Partecipanti</label>
                         <textarea class="form-control" name="presenti" rows="3" placeholder="Elenco dei partecipanti..."><?php echo htmlspecialchars($editingVerbale['presenti'] ?? ''); ?></textarea>
                     </div>
-                    
+
                     <div class="mb-3">
                         <label class="form-label">Ordine del Giorno</label>
                         <textarea class="form-control" name="ordine_del_giorno" rows="4" placeholder="Punti all'ordine del giorno..."><?php echo htmlspecialchars($editingVerbale['ordine_del_giorno'] ?? ''); ?></textarea>
                     </div>
-                    
+
                     <div class="mb-3">
                         <label class="form-label">Deliberazioni</label>
                         <textarea class="form-control" name="deliberazioni" rows="4" placeholder="Deliberazioni e decisioni prese..."><?php echo htmlspecialchars($editingVerbale['deliberazioni'] ?? ''); ?></textarea>
@@ -340,7 +339,7 @@ if (isset($_GET['edit'])) {
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button>
-                    <button type="submit" class="btn btn-primary"><?php echo $editingVerbale ? 'Aggiorna' : 'Salva'; ?></button>
+                    <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg me-1"></i><?php echo $editingVerbale ? 'Aggiorna' : 'Salva'; ?></button>
                 </div>
             </form>
         </div>

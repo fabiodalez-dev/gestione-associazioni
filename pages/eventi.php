@@ -11,7 +11,10 @@ $messageType = '';
 
 // Gestione Azioni POST
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (isset($_POST['delete_id'])) {
+    if (!validateCSRFToken($_POST['csrf_token'] ?? '')) {
+        $message = "Errore di sicurezza: token CSRF non valido.";
+        $messageType = "danger";
+    } elseif (isset($_POST['delete_id'])) {
         $stmt = $pdo->prepare("DELETE FROM eventi WHERE id = ? AND associazione_id = ?");
         $stmt->execute([$_POST['delete_id'], $associazione_id]);
         $message = "Evento eliminato con successo.";
@@ -68,7 +71,7 @@ $events = $stmt->fetchAll();
 </div>
 
 <?php if ($message): ?>
-<div class="alert alert-<?php echo $messageType; ?>"><?php echo $message; ?></div>
+<div class="alert alert-<?php echo htmlspecialchars($messageType); ?>"><?php echo htmlspecialchars($message); ?></div>
 <?php endif; ?>
 
 <div class="d-flex justify-content-between mb-3">
@@ -87,7 +90,7 @@ $events = $stmt->fetchAll();
                 <td class="text-end">
                     <a href="index.php?page=partecipanti&evento_id=<?php echo $event['id']; ?>" class="btn btn-sm btn-outline-info"><i class="bi bi-people"></i></a>
                     <a href="index.php?page=eventi&edit=<?php echo $event['id']; ?>" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil"></i></a>
-                    <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questo evento?')"><input type="hidden" name="delete_id" value="<?php echo $event['id']; ?>"><button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button></form>
+                    <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questo evento?')"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="delete_id" value="<?php echo $event['id']; ?>"><button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button></form>
                 </td>
             </tr>
         <?php endforeach; ?>
@@ -109,7 +112,7 @@ $events = $stmt->fetchAll();
             <div class="card-actions">
                 <a href="index.php?page=partecipanti&evento_id=<?php echo $event['id']; ?>" class="btn btn-sm btn-outline-info"><i class="bi bi-people me-1"></i>Partecipanti</a>
                 <a href="index.php?page=eventi&edit=<?php echo $event['id']; ?>" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil me-1"></i>Modifica</a>
-                <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questo evento?')"><input type="hidden" name="delete_id" value="<?php echo $event['id']; ?>"><button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash me-1"></i>Elimina</button></form>
+                <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questo evento?')"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="delete_id" value="<?php echo $event['id']; ?>"><button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash me-1"></i>Elimina</button></form>
             </div>
         </div>
         <?php endforeach; ?>
@@ -122,6 +125,7 @@ $events = $stmt->fetchAll();
     <div class="modal-header"><h5 class="modal-title"><?php echo $editingEvent ? 'Modifica' : 'Nuovo'; ?> Evento</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
     <form method="POST">
         <div class="modal-body">
+            <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
             <input type="hidden" name="id" value="<?php echo $editingEvent['id'] ?? ''; ?>">
             <div class="mb-3"><label>Titolo</label><input type="text" name="titolo" class="form-control" value="<?php echo htmlspecialchars($editingEvent['titolo'] ?? ''); ?>" required></div>
             <div class="mb-3"><label>Data e Ora</label><input type="datetime-local" name="data_evento" class="form-control" value="<?php echo $editingEvent['data_evento_form'] ?? ''; ?>" required></div>
@@ -130,7 +134,7 @@ $events = $stmt->fetchAll();
         </div>
         <div class="modal-footer">
             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button>
-            <button type="submit" class="btn btn-primary">Salva</button>
+            <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg me-1"></i>Salva</button>
         </div>
     </form>
 </div></div>

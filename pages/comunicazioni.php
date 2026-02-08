@@ -4,73 +4,70 @@
 if (!isUserLoggedIn()) {
     redirect('auth/login.php');
 }
+if (!isset($_SESSION['associazione_id'])) {
+    redirect('index.php?page=dashboard');
+}
 
 $is_super_admin = ($_SESSION['user_role'] ?? '') === 'super_admin';
-$associazione_id = $_SESSION['associazione_id'] ?? null;
-$target_assoc = $is_super_admin ? ($_GET['assoc_id'] ?? $associazione_id) : $associazione_id;
+$associazione_id = $_SESSION['associazione_id'];
 
 // Handle form submission for sending communication
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['send_communication'])) {
-    $subject = trim($_POST['subject'] ?? '');
-    $message = trim($_POST['message'] ?? '');
-    $recipient_type = $_POST['recipient_type'] ?? 'all';
+    if (!validateCSRFToken($_POST['csrf_token'] ?? '')) {
+        $message = "Errore di sicurezza: token CSRF non valido.";
+        $messageType = "danger";
+    } else {
+        $subject = trim($_POST['subject'] ?? '');
+        $message = trim($_POST['message'] ?? '');
+        $recipient_type = $_POST['recipient_type'] ?? 'all';
 
-    try {
-        // Build base query scoped by associazione
-        $recipients = [];
-        if ($recipient_type === 'all') {
-            if ($target_assoc) {
+        try {
+            // Build base query scoped by associazione
+            $recipients = [];
+            if ($recipient_type === 'all') {
                 $stmt = $pdo->prepare("SELECT email, nome, cognome FROM soci WHERE associazione_id = ? AND email IS NOT NULL AND email != '' AND stato = 'Attivo'");
-                $stmt->execute([$target_assoc]);
-            } else {
-                // super admin across all associations
-                $stmt = $pdo->prepare("SELECT email, nome, cognome FROM soci WHERE email IS NOT NULL AND email != '' AND stato = 'Attivo'");
-                $stmt->execute();
-            }
-            $recipients = $stmt->fetchAll();
-        } elseif ($recipient_type === 'category') {
-            $category_id = $_POST['category_id'] ?? null;
-            if ($target_assoc && $category_id) {
-                $stmt = $pdo->prepare("SELECT email, nome, cognome FROM soci WHERE associazione_id = ? AND email IS NOT NULL AND email != '' AND categoria_socio_id = ? AND stato = 'Attivo'");
-                $stmt->execute([$target_assoc, $category_id]);
+                $stmt->execute([$associazione_id]);
                 $recipients = $stmt->fetchAll();
+            } elseif ($recipient_type === 'category') {
+                $category_id = $_POST['category_id'] ?? null;
+                if ($category_id) {
+                    $stmt = $pdo->prepare("SELECT email, nome, cognome FROM soci WHERE associazione_id = ? AND email IS NOT NULL AND email != '' AND categoria_socio_id = ? AND stato = 'Attivo'");
+                    $stmt->execute([$associazione_id, $category_id]);
+                    $recipients = $stmt->fetchAll();
+                }
+            } elseif ($recipient_type === 'section') {
+                $section_id = $_POST['section_id'] ?? null;
+                if ($section_id) {
+                    $stmt = $pdo->prepare("SELECT email, nome, cognome FROM soci WHERE associazione_id = ? AND email IS NOT NULL AND email != '' AND sede_id = ? AND stato = 'Attivo'");
+                    $stmt->execute([$associazione_id, $section_id]);
+                    $recipients = $stmt->fetchAll();
+                }
             }
-        } elseif ($recipient_type === 'section') {
-            $section_id = $_POST['section_id'] ?? null;
-            if ($target_assoc && $section_id) {
-                $stmt = $pdo->prepare("SELECT email, nome, cognome FROM soci WHERE associazione_id = ? AND email IS NOT NULL AND email != '' AND sede_id = ? AND stato = 'Attivo'");
-                $stmt->execute([$target_assoc, $section_id]);
-                $recipients = $stmt->fetchAll();
-            }
-        }
 
-        // Simulazione invio
-        $sent_count = count($recipients);
-        $message = "Comunicazione inviata con successo a $sent_count destinatari!";
-        $messageType = "success";
-    } catch (PDOException $e) {
-        $message = "Errore durante l'invio: " . $e->getMessage();
-        $messageType = "error";
+            // Simulazione invio
+            $sent_count = count($recipients);
+            $message = "Comunicazione inviata con successo a $sent_count destinatari!";
+            $messageType = "success";
+        } catch (PDOException $e) {
+            error_log('comunicazioni.php send PDOException: ' . $e->getMessage());
+            $message = "Errore durante l'invio. Riprova più tardi.";
+            $messageType = "error";
+        }
     }
 }
 
 // Get categories and sections for dropdowns scoped by association (or empty if none)
 try {
-    if ($target_assoc) {
-        $stmt = $pdo->prepare("SELECT id, nome FROM categorie_socio WHERE associazione_id = ? ORDER BY nome");
-        $stmt->execute([$target_assoc]);
-        $categories = $stmt->fetchAll();
+    $stmt = $pdo->prepare("SELECT id, nome FROM categorie_socio WHERE associazione_id = ? ORDER BY nome");
+    $stmt->execute([$associazione_id]);
+    $categories = $stmt->fetchAll();
 
-        $stmt = $pdo->prepare("SELECT id, nome FROM sedi WHERE associazione_id = ? ORDER BY nome");
-        $stmt->execute([$target_assoc]);
-        $sections = $stmt->fetchAll();
-    } else {
-        // super admin across all associations
-        $categories = $pdo->query("SELECT id, nome FROM categorie_socio ORDER BY nome")->fetchAll();
-        $sections = $pdo->query("SELECT id, nome FROM sedi ORDER BY nome")->fetchAll();
-    }
+    $stmt = $pdo->prepare("SELECT id, nome FROM sedi WHERE associazione_id = ? ORDER BY nome");
+    $stmt->execute([$associazione_id]);
+    $sections = $stmt->fetchAll();
 } catch (PDOException $e) {
-    die("Error fetching data: " . $e->getMessage());
+    error_log('comunicazioni.php fetch PDOException: ' . $e->getMessage());
+    die("Errore nel recupero dati. Riprova più tardi.");
 }
 ?>
 
@@ -81,7 +78,7 @@ try {
 
 <?php if (isset($message)): ?>
     <div class="alert alert-<?php echo $messageType === 'success' ? 'success' : 'danger'; ?> alert-dismissible fade show" role="alert">
-        <?php echo $message; ?>
+        <?php echo htmlspecialchars($message); ?>
         <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
     </div>
 <?php endif; ?>
@@ -92,6 +89,7 @@ try {
     </div>
     <div class="card-body">
         <form method="POST">
+            <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
             <input type="hidden" name="send_communication" value="1">
             <div class="mb-3">
                 <label class="form-label">Oggetto</label>
@@ -143,17 +141,20 @@ try {
 </div>
 
 <script>
-    document.getElementById('recipient_type').addEventListener('change', function() {
-        const categorySelect = document.getElementById('category_select');
-        const sectionSelect = document.getElementById('section_select');
-        
-        categorySelect.classList.add('d-none');
-        sectionSelect.classList.add('d-none');
-        
-        if (this.value === 'category') {
-            categorySelect.classList.remove('d-none');
-        } else if (this.value === 'section') {
-            sectionSelect.classList.remove('d-none');
-        }
-    });
+    var recipientType = document.getElementById('recipient_type');
+    var categorySelect = document.getElementById('category_select');
+    var sectionSelect = document.getElementById('section_select');
+
+    if (recipientType && categorySelect && sectionSelect) {
+        recipientType.addEventListener('change', function() {
+            categorySelect.classList.add('d-none');
+            sectionSelect.classList.add('d-none');
+
+            if (this.value === 'category') {
+                categorySelect.classList.remove('d-none');
+            } else if (this.value === 'section') {
+                sectionSelect.classList.remove('d-none');
+            }
+        });
+    }
 </script>

@@ -4,26 +4,10 @@
 if (!isUserLoggedIn(['admin_associazione', 'super_admin'])) {
     redirect('auth/login.php');
 }
-
-// Per super_admin, permetti selezione associazione
-if ($_SESSION['user_role'] === 'super_admin') {
-    $associazione_id = $_GET['assoc_id'] ?? null;
-    if (!$associazione_id) {
-        // Mostra selezione associazione
-        $stmt = $pdo->query("SELECT id, nome FROM associazioni WHERE attiva = 1 ORDER BY nome");
-        $associazioni = $stmt->fetchAll();
-        
-        if (empty($associazioni)) {
-            $error = "Nessuna associazione trovata. Crea prima un'associazione.";
-        }
-    }
-} else {
-    // Per altri ruoli, usa l'associazione dalla sessione
-    if (!isset($_SESSION['associazione_id'])) {
-        redirect('auth/login.php');
-    }
-    $associazione_id = $_SESSION['associazione_id'];
+if (!isset($_SESSION['associazione_id'])) {
+    redirect('index.php?page=dashboard');
 }
+$associazione_id = $_SESSION['associazione_id'];
 $message = '';
 $messageType = '';
 
@@ -116,38 +100,9 @@ $campi = $stmt_campi->fetchAll();
     </div>
 </div>
 
-<?php if ($_SESSION['user_role'] === 'super_admin' && !$associazione_id): ?>
-    <div class="card mb-4">
-        <div class="card-header">
-            <h5 class="mb-0"><i class="bi bi-building"></i> Seleziona Associazione</h5>
-        </div>
-        <div class="card-body">
-            <?php if (isset($error)): ?>
-                <div class="alert alert-warning"><?php echo $error; ?></div>
-            <?php endif; ?>
-            
-            <?php if (!empty($associazioni)): ?>
-                <p>Seleziona l'associazione per configurare i campi personalizzati:</p>
-                <div class="row">
-                    <?php foreach ($associazioni as $assoc): ?>
-                        <div class="col-md-6 mb-3">
-                            <div class="card border">
-                                <div class="card-body">
-                                    <h6 class="card-title"><?php echo htmlspecialchars($assoc['nome']); ?></h6>
-                                    <a href="?page=config_campi&assoc_id=<?php echo urlencode($assoc['id']); ?>" 
-                                       class="btn btn-primary">Configura Campi</a>
-                                </div>
-                            </div>
-                        </div>
-                    <?php endforeach; ?>
-                </div>
-            <?php endif; ?>
-        </div>
-    </div>
-<?php else: ?>
 
 <?php if ($message): ?>
-<div class="alert alert-<?php echo $messageType; ?>"><?php echo $message; ?></div>
+<div class="alert alert-<?php echo htmlspecialchars($messageType); ?>"><?php echo htmlspecialchars($message); ?></div>
 <?php endif; ?>
 
 <div class="d-flex justify-content-between mb-3">
@@ -215,7 +170,7 @@ $campi = $stmt_campi->fetchAll();
         </div>
         <div class="modal-footer">
             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button>
-            <button type="submit" class="btn btn-primary">Salva</button>
+            <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg me-1"></i>Salva</button>
         </div>
     </form>
 </div></div>
@@ -289,6 +244,4 @@ document.addEventListener('DOMContentLoaded', function() {
 
 <?php if ($editingField): ?>
 <script>document.addEventListener('DOMContentLoaded', () => new bootstrap.Modal(document.getElementById('fieldModal')).show());</script>
-<?php endif; ?>
-
 <?php endif; ?>

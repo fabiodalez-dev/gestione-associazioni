@@ -17,6 +17,7 @@ if (!defined('INSTALLER_ACTIVE') && !headers_sent()) {
          . "style-src-elem 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com http://cdn.jsdelivr.net http://cdnjs.cloudflare.com; "
          . "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com http://cdn.jsdelivr.net http://cdnjs.cloudflare.com; "
          . "img-src 'self' data:; "
+         . "connect-src 'self'; "
          . "font-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com http://cdn.jsdelivr.net http://cdnjs.cloudflare.com;";
     if ($is_https) { $csp = "upgrade-insecure-requests; " . $csp; }
     header("Content-Security-Policy: $csp");
@@ -71,6 +72,14 @@ if (!defined('DB_CHARSET')) define('DB_CHARSET', 'utf8mb4');
 if (!defined('APP_ROOT')) define('APP_ROOT', __DIR__);
 if (!defined('UPLOADS_PATH')) define('UPLOADS_PATH', APP_ROOT . '/uploads');
 
+// --- Verifica installazione tramite lock file ---
+if (!file_exists(__DIR__ . '/.installed')) {
+    if (!defined('INSTALLER_ACTIVE') && basename($_SERVER['PHP_SELF']) !== 'install.php') {
+        header('Location: install.php');
+        exit;
+    }
+}
+
 // --- Connessione Database (PDO) ---
 try {
     $dsn = "mysql:host=" . DB_HOST . ";dbname=" . DB_NAME . ";charset=" . DB_CHARSET;
@@ -80,25 +89,13 @@ try {
         PDO::ATTR_EMULATE_PREPARES   => false,
     ];
     $pdo = new PDO($dsn, DB_USER, DB_PASS, $options);
-    
-    // Verifica se l'applicazione è installata controllando l'esistenza delle tabelle principali
-    $stmt = $pdo->query("SHOW TABLES LIKE 'associazioni'");
-    if ($stmt->rowCount() === 0) {
-        // Applicazione non installata, reindirizza all'installer
-        if (!defined('INSTALLER_ACTIVE') && basename($_SERVER['PHP_SELF']) !== 'install.php') {
-            header('Location: install.php');
-            exit;
-        }
-    }
 } catch (PDOException $e) {
-    // Errore di connessione al database - probabilmente non installato
     if (!defined('INSTALLER_ACTIVE') && basename($_SERVER['PHP_SELF']) !== 'install.php') {
-        // Reindirizza all'installer se non siamo già nell'installer
         header('Location: install.php');
         exit;
     } else {
-        // Mostra errore solo se siamo nell'installer
-        die("Errore di connessione al database: " . $e->getMessage());
+        error_log('config.php DB connection error: ' . $e->getMessage());
+        die("Errore di connessione al database. Verifica la configurazione.");
     }
 }
 

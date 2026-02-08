@@ -4,29 +4,13 @@
 if (!isUserLoggedIn()) {
     redirect('auth/login.php');
 }
+if (!isset($_SESSION['associazione_id'])) {
+    redirect('index.php?page=dashboard');
+}
+$associazione_id = $_SESSION['associazione_id'];
 
 // Assicura colonne costo tessera
 ensureTesseraCostColumns($pdo);
-
-// Per super_admin, permetti selezione associazione
-if ($_SESSION['user_role'] === 'super_admin') {
-    $associazione_id = $_GET['assoc_id'] ?? null;
-    if (!$associazione_id) {
-        // Mostra selezione associazione
-        $stmt = $pdo->query("SELECT id, nome FROM associazioni WHERE attiva = 1 ORDER BY nome");
-        $associazioni = $stmt->fetchAll();
-        
-        if (empty($associazioni)) {
-            $error = "Nessuna associazione trovata. Crea prima un'associazione.";
-        }
-    }
-} else {
-    // Per altri ruoli, usa l'associazione dalla sessione
-    if (!isset($_SESSION['associazione_id'])) {
-        redirect('auth/login.php');
-    }
-    $associazione_id = $_SESSION['associazione_id'];
-}
 $message = '';
 $messageType = '';
 
@@ -148,7 +132,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     } catch (PDOException $e) {
-        $message = "Errore durante l'aggiornamento: " . $e->getMessage();
+        error_log('configurazioni.php PDOException: ' . $e->getMessage());
+        $message = "Errore durante l'aggiornamento. Riprova più tardi.";
         $messageType = "danger";
     }
 }
@@ -186,38 +171,9 @@ if ($has_tessera_templates) {
 </div>
 
 <?php if ($message): ?>
-<div class="alert alert-<?php echo $messageType; ?>"><?php echo $message; ?></div>
+<div class="alert alert-<?php echo htmlspecialchars($messageType); ?>"><?php echo htmlspecialchars($message); ?></div>
 <?php endif; ?>
 
-<?php if ($_SESSION['user_role'] === 'super_admin' && !$associazione_id): ?>
-    <div class="card mb-4">
-        <div class="card-header">
-            <h5 class="mb-0"><i class="bi bi-building"></i> Seleziona Associazione da Configurare</h5>
-        </div>
-        <div class="card-body">
-            <?php if (isset($error)): ?>
-                <div class="alert alert-warning"><?php echo $error; ?></div>
-            <?php endif; ?>
-            
-            <?php if (!empty($associazioni)): ?>
-                <p>Seleziona l'associazione di cui vuoi modificare le configurazioni:</p>
-                <div class="row">
-                    <?php foreach ($associazioni as $assoc): ?>
-                        <div class="col-md-6 mb-3">
-                            <div class="card border">
-                                <div class="card-body">
-                                    <h6 class="card-title"><?php echo htmlspecialchars($assoc['nome']); ?></h6>
-                                    <a href="?page=configurazioni&assoc_id=<?php echo urlencode($assoc['id']); ?>" 
-                                       class="btn btn-primary">Configura</a>
-                                </div>
-                            </div>
-                        </div>
-                    <?php endforeach; ?>
-                </div>
-            <?php endif; ?>
-        </div>
-    </div>
-<?php else: ?>
 
 <div class="row">
     <div class="col-lg-8">
@@ -282,7 +238,7 @@ if ($has_tessera_templates) {
                         <div class="col-md-6 mb-3"><label>Email</label><input type="email" name="email" class="form-control" value="<?php echo htmlspecialchars($associazione['email'] ?? ''); ?>"></div>
                         <div class="col-md-6 mb-3"><label>Telefono</label><input type="tel" name="telefono" class="form-control" value="<?php echo htmlspecialchars($associazione['telefono'] ?? ''); ?>"></div>
                     </div>
-                    <button type="submit" name="update_info" class="btn btn-primary">Salva Dati Anagrafici</button>
+                    <button type="submit" name="update_info" class="btn btn-primary"><i class="bi bi-floppy me-1"></i>Salva Dati Anagrafici</button>
                 </form>
             </div>
         </div>
@@ -304,7 +260,7 @@ if ($has_tessera_templates) {
                         <input type="number" name="giorni_notifica_scadenza" class="form-control" value="<?php echo htmlspecialchars($associazione['giorni_notifica_scadenza'] ?? '30'); ?>">
                         <div class="form-text">Quanti giorni prima della scadenza inviare la notifica.</div>
                     </div>
-                    <button type="submit" name="update_tesseramento" class="btn btn-primary mt-3">Salva Impostazioni Tesseramento</button>
+                    <button type="submit" name="update_tesseramento" class="btn btn-primary mt-3"><i class="bi bi-floppy me-1"></i>Salva Impostazioni Tesseramento</button>
                 </form>
             </div>
         </div>
@@ -316,7 +272,7 @@ if ($has_tessera_templates) {
                 <form method="POST">
                     <div class="form-text mb-2">Placeholder disponibili: {NOME_SOCIO}, {COGNOME_SOCIO}, {DATA_SCADENZA}, {IMPORTO_QUOTA}</div>
                     <textarea name="template_email_scadenza" class="form-control" rows="10"><?php echo htmlspecialchars($associazione['template_email_scadenza'] ?? 'Ciao {NOME_SOCIO}, ti ricordiamo che la tua quota scade il {DATA_SCADENZA}.'); ?></textarea>
-                    <button type="submit" name="update_template" class="btn btn-primary mt-3">Salva Template</button>
+                    <button type="submit" name="update_template" class="btn btn-primary mt-3"><i class="bi bi-floppy me-1"></i>Salva Template</button>
                 </form>
             </div>
         </div>
@@ -333,9 +289,6 @@ if ($has_tessera_templates) {
                 <?php else: ?>
                 <form method="GET" class="row g-2 align-items-end mb-3">
                     <input type="hidden" name="page" value="configurazioni">
-                    <?php if ($_SESSION['user_role'] === 'super_admin' && isset($_GET['assoc_id'])): ?>
-                        <input type="hidden" name="assoc_id" value="<?php echo htmlspecialchars($_GET['assoc_id']); ?>">
-                    <?php endif; ?>
                     <div class="col-md-6">
                         <label class="form-label">Tipo Socio</label>
                         <select name="tipo_id" class="form-select">
@@ -346,7 +299,7 @@ if ($has_tessera_templates) {
                         </select>
                     </div>
                     <div class="col-md-6 col-lg-3">
-                        <button type="submit" class="btn btn-outline-secondary">Carica</button>
+                        <button type="submit" class="btn btn-primary"><i class="bi bi-folder2-open me-1"></i>Carica</button>
                     </div>
                 </form>
 
@@ -355,7 +308,7 @@ if ($has_tessera_templates) {
                     <input type="hidden" name="tipo_id" value="<?php echo htmlspecialchars($selected_tipo_id); ?>">
                     <div class="form-text mb-2">Placeholder disponibili: {ASSOCIAZIONE_NOME}, {ASSOCIAZIONE_CODICE_FISCALE}, {ASSOCIAZIONE_INDIRIZZO}, {NOME}, {COGNOME}, {NOME_COMPLETO}, {NUMERO_SOCIO}, {TIPO_SOCIO}, {CATEGORIA_SOCIO}, {NUMERO_TESSERA}, {ANNO_VALIDITA}, {DATA_EMISSIONE}, {DATA_SCADENZA}</div>
                     <textarea name="contenuto" class="form-control" rows="10"><?php echo htmlspecialchars($template_corrente ?: "Il/La sottoscritto/a {NOME_COMPLETO}, tessera n. {NUMERO_TESSERA}, è iscritto/a all'associazione {ASSOCIAZIONE_NOME} per l'anno {ANNO_VALIDITA}."); ?></textarea>
-                    <button type="submit" class="btn btn-primary mt-3">Salva Template Tessera</button>
+                    <button type="submit" class="btn btn-primary mt-3"><i class="bi bi-floppy me-1"></i>Salva Template Tessera</button>
                 </form>
                 <?php endif; ?>
             </div>
@@ -390,5 +343,3 @@ if ($has_tessera_templates) {
         </div>
     </div>
 </div>
-
-<?php endif; ?>

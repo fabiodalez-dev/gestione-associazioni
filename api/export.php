@@ -161,8 +161,8 @@ try {
     }
 
 } catch (PDOException $e) {
-    // In un'app di produzione, loggare l'errore invece di mostrarlo
-    die('Errore database: ' . $e->getMessage());
+    error_log('export.php PDOException: ' . $e->getMessage());
+    die('Errore database. Riprova più tardi.');
 }
 
 fclose($output);

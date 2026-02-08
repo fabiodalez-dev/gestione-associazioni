@@ -5,7 +5,24 @@
             <i class="bi bi-people-fill fs-4 me-2 text-primary"></i>
             <span class="fs-5 fw-semibold"><?php echo htmlspecialchars($_SESSION['associazione_nome'] ?? 'Manager'); ?></span>
         </div>
-        
+
+        <?php if (($_SESSION['user_role'] ?? '') === 'super_admin'): ?>
+        <?php
+        $sidebar_assoc_list = $pdo->query("SELECT id, nome FROM associazioni WHERE attiva = 1 ORDER BY nome")->fetchAll();
+        $sidebar_current_id = $_SESSION['associazione_id'] ?? null;
+        $sidebar_current_nome = $_SESSION['associazione_nome'] ?? '';
+        ?>
+        <div class="sidebar-assoc-picker">
+            <label class="sidebar-assoc-label"><i class="bi bi-building me-1"></i>Associazione</label>
+            <select class="sidebar-assoc-select" onchange="if(this.value){window.location='index.php?page=dashboard&assoc_id='+this.value}else{window.location='index.php?page=dashboard&switch_assoc=1'}">
+                <option value="">-- Seleziona --</option>
+                <?php foreach ($sidebar_assoc_list as $sa): ?>
+                    <option value="<?php echo htmlspecialchars($sa['id']); ?>" <?php echo ($sidebar_current_id === $sa['id']) ? 'selected' : ''; ?>><?php echo htmlspecialchars($sa['nome']); ?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <?php endif; ?>
+
         <hr>
 
         <h6 class="sidebar-heading d-flex justify-content-between align-items-center px-3 mt-4 mb-1 text-muted text-uppercase">

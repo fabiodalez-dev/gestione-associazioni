@@ -4,53 +4,54 @@
 if (!isUserLoggedIn()) {
     redirect('auth/login.php');
 }
+if (!isset($_SESSION['associazione_id'])) {
+    redirect('index.php?page=dashboard');
+}
 
 $is_super_admin = ($_SESSION['user_role'] ?? '') === 'super_admin';
-$associazione_id = $_SESSION['associazione_id'] ?? null;
-$assoc_filter = $is_super_admin ? ($_GET['assoc_id'] ?? 'all') : ($associazione_id ?? 'all');
+$associazione_id = $_SESSION['associazione_id'];
 $message = '';
 $messageType = '';
 
 // Assicura colonne costo tessera
 ensureTesseraCostColumns($pdo);
-$message = '';
-$messageType = '';
 
 // Carica configurazione associazione per tipo scadenza
 $stmt_cfg = $pdo->prepare("SELECT tipo_scadenza_default FROM associazioni WHERE id = ? LIMIT 1");
-$stmt_cfg->execute([$associazione_id ?? ($assoc_filter !== 'all' ? $assoc_filter : null)]);
+$stmt_cfg->execute([$associazione_id]);
 $tipo_scadenza_default = $stmt_cfg->fetchColumn() ?: 'solare';
 
 // Gestione Azioni POST
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (isset($_POST['delete_id'])) {
+    if (!validateCSRFToken($_POST['csrf_token'] ?? '')) {
+        $message = "Errore di sicurezza: token CSRF non valido.";
+        $messageType = "danger";
+    } elseif (isset($_POST['delete_id'])) {
         $stmt = $pdo->prepare("DELETE FROM tessere WHERE id = ? AND associazione_id = ?");
-        $stmt->execute([$_POST['delete_id'], $associazione_id ?? ($assoc_filter !== 'all' ? $assoc_filter : null)]);
+        $stmt->execute([$_POST['delete_id'], $associazione_id]);
         $message = "Tessera eliminata.";
         $messageType = "success";
 
     } elseif (isset($_POST['generate_all'])) {
         $currentYear = $_POST['anno_validita'] ?? date('Y');
-        $target_assoc = $associazione_id ?? ($assoc_filter !== 'all' ? $assoc_filter : null);
-        if (!$target_assoc) { $message = "Seleziona un'associazione"; $messageType = 'warning'; }
-        else {
+        {
         $stmt = $pdo->prepare("SELECT id FROM soci WHERE stato = 'Attivo' AND associazione_id = ? AND id NOT IN (SELECT socio_id FROM tessere WHERE anno_validita = ? AND associazione_id = ?)");
-        $stmt->execute([$target_assoc, $currentYear, $target_assoc]);
+        $stmt->execute([$associazione_id, $currentYear, $associazione_id]);
         $soci_da_tesserare = $stmt->fetchAll(PDO::FETCH_COLUMN);
 
         $generated_count = 0;
         foreach ($soci_da_tesserare as $socio_id) {
             // Get the next progressive number for this year
             $count_stmt = $pdo->prepare("SELECT COUNT(*) as cnt FROM tessere WHERE associazione_id = ? AND anno_validita = ?");
-            $count_stmt->execute([$target_assoc, $currentYear]);
+            $count_stmt->execute([$associazione_id, $currentYear]);
             $count = ((int)$count_stmt->fetch()['cnt']) + $generated_count + 1;
-            $numero_tessera = $currentYear . str_pad($count, 4, '0', STR_PAD_LEFT);
+            $numero_tessera = $currentYear . str_pad((string)$count, 4, '0', STR_PAD_LEFT);
             
             $data_emissione = date('Y-m-d');
             $data_scadenza = ($tipo_scadenza_default === 'solare') ? $currentYear . '-12-31' : date('Y-m-d', strtotime('+1 year'));
 
             $insert_stmt = $pdo->prepare("INSERT INTO tessere (id, associazione_id, socio_id, numero_tessera, anno_validita, data_emissione, data_scadenza, tipo_scadenza) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-            $insert_stmt->execute([generateUuid(), $target_assoc, $socio_id, $numero_tessera, $currentYear, $data_emissione, $data_scadenza, $tipo_scadenza_default]);
+            $insert_stmt->execute([generateUuid(), $associazione_id, $socio_id, $numero_tessera, $currentYear, $data_emissione, $data_scadenza, $tipo_scadenza_default]);
             $generated_count++;
         }
         $message = "Generate $generated_count nuove tessere per l'anno $currentYear.";
@@ -78,12 +79,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($id) {
             $stmt = $pdo->prepare("UPDATE tessere SET socio_id=?, numero_tessera=?, anno_validita=?, data_emissione=?, data_scadenza=?, stato=?, tipo_scadenza=? WHERE id=? AND associazione_id=?");
-            $stmt->execute([$socio_id, $numero_tessera, $anno_validita, $data_emissione, $data_scadenza, $stato, $tipo_scadenza, $id, ($associazione_id ?? ($assoc_filter !== 'all' ? $assoc_filter : null))]);
+            $stmt->execute([$socio_id, $numero_tessera, $anno_validita, $data_emissione, $data_scadenza, $stato, $tipo_scadenza, $id, ($associazione_id)]);
             $message = "Tessera aggiornata.";
         } else {
             $new_id = generateUuid();
             $stmt = $pdo->prepare("INSERT INTO tessere (id, associazione_id, socio_id, numero_tessera, anno_validita, data_emissione, data_scadenza, stato, tipo_scadenza) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-            $stmt->execute([$new_id, ($associazione_id ?? ($assoc_filter !== 'all' ? $assoc_filter : null)), $socio_id, $numero_tessera, $anno_validita, $data_emissione, $data_scadenza, $stato, $tipo_scadenza]);
+            $stmt->execute([$new_id, ($associazione_id), $socio_id, $numero_tessera, $anno_validita, $data_emissione, $data_scadenza, $stato, $tipo_scadenza]);
             $message = "Tessera creata.";
         }
         $messageType = "success";
@@ -103,14 +104,9 @@ $anno_filter = $_GET['anno'] ?? date('Y');
 $searchTerm = $_GET['search'] ?? '';
 $stato_filter = $_GET['stato'] ?? 'all';
 
-$lists_assoc_id = $is_super_admin
-    ? (($assoc_filter !== 'all') ? $assoc_filter : null)
-    : ($associazione_id);
-if ($lists_assoc_id) {
-    $stmt_soci = $pdo->prepare("SELECT id, CONCAT(cognome, ' ', nome) as nome_completo FROM soci WHERE associazione_id = ? AND stato = 'Attivo' ORDER BY cognome, nome");
-    $stmt_soci->execute([$lists_assoc_id]);
-    $soci_attivi = $stmt_soci->fetchAll();
-} else { $soci_attivi = []; }
+$stmt_soci = $pdo->prepare("SELECT id, CONCAT(cognome, ' ', nome) as nome_completo FROM soci WHERE associazione_id = ? AND stato = 'Attivo' ORDER BY cognome, nome");
+$stmt_soci->execute([$associazione_id]);
+$soci_attivi = $stmt_soci->fetchAll();
 
 $q = trim($_GET['q'] ?? '');
 $status = $_GET['status'] ?? 'all';
@@ -134,10 +130,8 @@ $sql = "SELECT t.*, s.nome, s.cognome, s.numero_socio, a.nome AS associazione_no
         WHERE 1=1";
 $params = [];
 
-if ($lists_assoc_id) { 
-    $sql .= " AND t.associazione_id = ?"; 
-    $params[] = $lists_assoc_id; 
-}
+$sql .= " AND t.associazione_id = ?";
+$params[] = $associazione_id;
 
 // Filtro per anno (nuovo approccio)
 $sql .= " AND t.anno_validita = ?";
@@ -167,6 +161,118 @@ $stmt_tessere = $pdo->prepare($sql);
 $stmt_tessere->execute($params);
 $tessere = $stmt_tessere->fetchAll();
 
+// AJAX response mode — return only the results HTML + count as JSON
+if (isset($_GET['ajax']) && $_GET['ajax'] === '1') {
+    while (ob_get_level()) { ob_end_clean(); }
+    header('Content-Type: application/json; charset=utf-8');
+    ob_start();
+    if (empty($tessere)): ?>
+<div class="table-empty">
+    <i class="bi bi-credit-card"></i>
+    <h5>Nessuna tessera trovata</h5>
+    <p class="text-muted">Non ci sono tessere che corrispondono ai criteri di ricerca.</p>
+</div>
+<?php else: ?>
+<div class="responsive-table-wrapper">
+    <table class="table-desktop">
+        <thead>
+            <tr>
+                <th>Socio</th>
+                <th>Associazione</th>
+                <th>N. Tessera</th>
+                <th>Anno</th>
+                <th>Scadenza</th>
+                <th>Stato</th>
+                <th class="text-end">Azioni</th>
+            </tr>
+        </thead>
+        <tbody>
+        <?php foreach ($tessere as $t):
+            $status = $t['stato'];
+            $badge_class = 'secondary';
+            if ($status === 'Attiva') {
+                if (!empty($t['data_scadenza']) && strtotime($t['data_scadenza']) < time()) {
+                    $status = 'Scaduta'; $badge_class = 'danger';
+                } else { $badge_class = 'success'; }
+            } elseif ($status === 'Scaduta') { $badge_class = 'danger'; }
+            elseif ($status === 'Sospesa') { $badge_class = 'warning'; }
+        ?>
+            <tr>
+                <td>
+                    <div><?php echo htmlspecialchars($t['cognome'] . ' ' . $t['nome']); ?></div>
+                    <small class="text-muted font-monospace"><?php echo htmlspecialchars($t['numero_socio']); ?></small>
+                </td>
+                <td><span class="badge bg-secondary"><?php echo htmlspecialchars($t['associazione_nome'] ?? ''); ?></span></td>
+                <td>
+                    <div class="font-monospace"><?php echo htmlspecialchars($t['numero_tessera']); ?></div>
+                    <?php if (!empty($t['template_tessera'])): ?><small class="text-muted"><?php echo htmlspecialchars($t['template_tessera']); ?></small><?php endif; ?>
+                </td>
+                <td><?php echo htmlspecialchars($t['anno_validita']); ?></td>
+                <td>
+                    <?php if (!empty($t['data_scadenza'])): ?>
+                        <div><?php echo date('d/m/Y', strtotime($t['data_scadenza'])); ?></div>
+                        <?php
+                        $scad = strtotime($t['data_scadenza']); $today = strtotime(date('Y-m-d'));
+                        $soon = strtotime("+30 days", $today);
+                        if ($scad < $today): ?><span class="badge bg-danger">Scaduta</span>
+                        <?php elseif ($scad <= $soon): ?><span class="badge bg-warning text-dark">In scadenza</span><?php endif; ?>
+                    <?php else: ?><span class="text-muted">—</span><?php endif; ?>
+                </td>
+                <td><span class="badge bg-<?php echo $badge_class; ?>"><?php echo htmlspecialchars($status); ?></span></td>
+                <td class="text-end">
+                    <a href="index.php?page=genera-tessera-pdf&tessera_id=<?php echo $t['id']; ?>" class="btn btn-sm btn-outline-success" title="Genera PDF" target="_blank"><i class="bi bi-file-pdf"></i></a>
+                    <a href="index.php?page=tessere&edit=<?php echo $t['id']; ?>" class="btn btn-sm btn-outline-primary" title="Modifica"><i class="bi bi-pencil"></i></a>
+                    <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questa tessera?')">
+                        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
+                        <input type="hidden" name="delete_id" value="<?php echo $t['id']; ?>">
+                        <button type="submit" class="btn btn-sm btn-outline-danger" title="Elimina"><i class="bi bi-trash"></i></button>
+                    </form>
+                </td>
+            </tr>
+        <?php endforeach; ?>
+        </tbody>
+    </table>
+    <div class="table-mobile">
+        <?php foreach ($tessere as $t):
+            $status = $t['stato']; $badge_class = 'secondary';
+            if ($status === 'Attiva') {
+                if (!empty($t['data_scadenza']) && strtotime($t['data_scadenza']) < time()) { $status = 'Scaduta'; $badge_class = 'danger'; }
+                else { $badge_class = 'success'; }
+            } elseif ($status === 'Scaduta') { $badge_class = 'danger'; }
+            elseif ($status === 'Sospesa') { $badge_class = 'warning'; }
+        ?>
+        <div class="table-card">
+            <div class="card-header-section">
+                <div class="card-primary-info">
+                    <h5 class="card-title"><?php echo htmlspecialchars($t['cognome'] . ' ' . $t['nome']); ?></h5>
+                    <div class="card-subtitle"><?php echo htmlspecialchars($t['numero_socio']); ?></div>
+                </div>
+                <div class="card-status"><span class="badge bg-<?php echo $badge_class; ?>"><?php echo htmlspecialchars($status); ?></span></div>
+            </div>
+            <div class="card-content">
+                <div class="card-field"><span class="field-label">N. Tessera</span><span class="field-value font-monospace"><?php echo htmlspecialchars($t['numero_tessera']); ?></span></div>
+                <div class="card-field"><span class="field-label">Anno</span><span class="field-value"><?php echo htmlspecialchars($t['anno_validita']); ?></span></div>
+                <div class="card-field"><span class="field-label">Scadenza</span><span class="field-value"><?php echo !empty($t['data_scadenza']) ? date('d/m/Y', strtotime($t['data_scadenza'])) : '—'; ?></span></div>
+            </div>
+            <div class="card-actions">
+                <a href="index.php?page=genera-tessera-pdf&tessera_id=<?php echo $t['id']; ?>" class="btn btn-sm btn-outline-success" target="_blank"><i class="bi bi-file-pdf me-1"></i>PDF</a>
+                <a href="index.php?page=tessere&edit=<?php echo $t['id']; ?>" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil me-1"></i>Modifica</a>
+                <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questa tessera?')">
+                    <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
+                    <input type="hidden" name="delete_id" value="<?php echo $t['id']; ?>">
+                    <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash me-1"></i>Elimina</button>
+                </form>
+            </div>
+        </div>
+        <?php endforeach; ?>
+    </div>
+</div>
+<?php endif;
+    $html = ob_get_clean();
+    echo json_encode(['count' => count($tessere), 'html' => $html]);
+    exit;
+}
+
 // Aggregazioni per grafici (per tipo tessera e ricavi)
 $agg_sql = "SELECT COALESCE(ts.nome, t.template_tessera, 'Default') AS tipo,
                    COUNT(*) AS cnt,
@@ -179,9 +285,9 @@ $agg_sql = "SELECT COALESCE(ts.nome, t.template_tessera, 'Default') AS tipo,
 
 $agg_params = [$anno_filter];
 
-if ($lists_assoc_id) { 
+if ($associazione_id) { 
     $agg_sql .= " AND t.associazione_id = ?"; 
-    $agg_params[] = $lists_assoc_id; 
+    $agg_params[] = $associazione_id; 
 }
 
 if ($q !== '') {
@@ -209,12 +315,15 @@ $chart_revenue = array_map(fn($r)=> (int)round((float)$r['ricavi']), $agg_rows);
 ?>
 
 <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
-    <h1 class="h2">Gestione Tessere</h1>
-    <p class="text-muted">Gestisci le tessere annuali dei soci con strumenti avanzati</p>
+    <div>
+        <h1 class="h2">Gestione Tessere</h1>
+        <p class="text-muted">Gestisci le tessere annuali dei soci con strumenti avanzati</p>
+    </div>
+    <span class="badge bg-primary" id="tessereCount"><?php echo count($tessere); ?> <?php echo count($tessere) === 1 ? 'tessera' : 'tessere'; ?></span>
 </div>
 
 <?php if ($message): ?>
-<div class="alert alert-<?php echo $messageType; ?>"><?php echo $message; ?></div>
+<div class="alert alert-<?php echo htmlspecialchars($messageType); ?>"><?php echo htmlspecialchars($message); ?></div>
 <?php endif; ?>
 
 <!-- Filtri -->
@@ -223,34 +332,18 @@ $chart_revenue = array_map(fn($r)=> (int)round((float)$r['ricavi']), $agg_rows);
         <h5 class="mb-0"><i class="bi bi-funnel me-2"></i>Filtri di Ricerca</h5>
     </div>
     <div class="card-body">
-        <form method="GET" class="row g-3">
+        <form method="GET" class="row g-3" id="tessereFiltersForm" data-ajax-filter>
             <input type="hidden" name="page" value="tessere">
-            
-            <?php if ($is_super_admin): ?>
-            <div class="col-md-6 col-lg-3">
-                <label class="form-label fw-semibold">
-                    <i class="bi bi-building me-1"></i>Associazione
-                </label>
-                <select class="form-select" name="assoc_id" onchange="this.form.submit()">
-                    <option value="all" <?php echo ($assoc_filter==='all')?'selected':''; ?>>Tutte le associazioni</option>
-                    <?php 
-                    $associazioni = $pdo->query("SELECT id, nome FROM associazioni ORDER BY nome")->fetchAll();
-                    foreach ($associazioni as $a): ?>
-                        <option value="<?php echo $a['id']; ?>" <?php echo ($assoc_filter===$a['id'])?'selected':''; ?>><?php echo htmlspecialchars($a['nome']); ?></option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-            <?php endif; ?>
             
             <div class="col-md-6 col-lg-3">
                 <label class="form-label fw-semibold">
                     <i class="bi bi-calendar me-1"></i>Anno
                 </label>
-                <select class="form-select" name="anno" onchange="this.form.submit()">
+                <select class="form-select" name="anno">
                     <?php 
                     // Get available years
                     $years_stmt = $pdo->prepare("SELECT DISTINCT anno_validita FROM tessere WHERE associazione_id = ? ORDER BY anno_validita DESC");
-                    $years_stmt->execute([$lists_assoc_id]);
+                    $years_stmt->execute([$associazione_id]);
                     $available_years = $years_stmt->fetchAll(PDO::FETCH_COLUMN);
                     
                     // Add current year if not present
@@ -270,14 +363,14 @@ $chart_revenue = array_map(fn($r)=> (int)round((float)$r['ricavi']), $agg_rows);
                 <label class="form-label fw-semibold">
                     <i class="bi bi-search me-1"></i>Cerca
                 </label>
-                <input type="text" class="form-select" name="search" placeholder="Nome socio..." value="<?php echo htmlspecialchars($searchTerm); ?>" oninput="this.form.submit()">
+                <input type="text" class="form-control" name="search" placeholder="Nome socio..." value="<?php echo htmlspecialchars($searchTerm); ?>">
             </div>
             
             <div class="col-md-6 col-lg-3">
                 <label class="form-label fw-semibold">
                     <i class="bi bi-funnel me-1"></i>Stato
                 </label>
-                <select class="form-select" name="stato" onchange="this.form.submit()">
+                <select class="form-select" name="stato">
                     <option value="all" <?php echo ($stato_filter === 'all') ? 'selected' : ''; ?>>Tutti gli stati</option>
                     <option value="Attiva" <?php echo ($stato_filter === 'Attiva') ? 'selected' : ''; ?>>Attiva</option>
                     <option value="Scaduta" <?php echo ($stato_filter === 'Scaduta') ? 'selected' : ''; ?>>Scaduta</option>
@@ -291,17 +384,16 @@ $chart_revenue = array_map(fn($r)=> (int)round((float)$r['ricavi']), $agg_rows);
 
 <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
     <div class="d-flex gap-2">
-        <?php if (!($is_super_admin && $assoc_filter === 'all')): ?>
             <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#tesseraModal"><i class="bi bi-plus-lg"></i> Nuova Tessera</button>
             <form method="POST" onsubmit="return confirm('Generare tessere per i soci attivi senza tessera per l\'anno <?php echo date('Y'); ?>?')">
                 <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                 <input type="hidden" name="anno_validita" value="<?php echo date('Y'); ?>">
                 <button type="submit" name="generate_all" class="btn btn-outline-success"><i class="bi bi-magic"></i> Genera Tessere <?php echo date('Y'); ?></button>
             </form>
-        <?php endif; ?>
     </div>
 </div>
 
+<div id="tessereResults">
 <div class="responsive-table-wrapper">
     <!-- Desktop Table View -->
     <table class="table-desktop">
@@ -434,6 +526,7 @@ $chart_revenue = array_map(fn($r)=> (int)round((float)$r['ricavi']), $agg_rows);
         <?php endforeach; ?>
     </div>
 </div>
+</div><!-- /tessereResults -->
 
 <div class="row mt-3">
     <div class="col-lg-6">
@@ -470,12 +563,64 @@ $chart_revenue = array_map(fn($r)=> (int)round((float)$r['ricavi']), $agg_rows);
     </script>
 </div>
 
+<script>
+(function() {
+    const form = document.getElementById('tessereFiltersForm');
+    if (!form) return;
+
+    const resultsContainer = document.getElementById('tessereResults');
+    const countBadge = document.getElementById('tessereCount');
+    let debounceTimer = null;
+
+    // Prevent normal form submit
+    form.addEventListener('submit', function(e) { e.preventDefault(); fetchTessere(); });
+
+    // Debounced search input
+    const searchInput = form.querySelector('input[name="search"]');
+    if (searchInput) {
+        searchInput.addEventListener('input', function() {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(fetchTessere, 300);
+        });
+    }
+
+    // Instant change on all selects
+    form.querySelectorAll('select').forEach(function(sel) {
+        sel.addEventListener('change', fetchTessere);
+    });
+
+    function fetchTessere() {
+        const data = new FormData(form);
+        const params = new URLSearchParams();
+        for (const [key, value] of data.entries()) {
+            params.append(key, value);
+        }
+        params.set('ajax', '1');
+
+        // The HTML is server-rendered with htmlspecialchars() on all outputs,
+        // same code path as the full page load, from the same origin.
+        fetch('index.php?' + params.toString())
+            .then(function(r) { return r.json(); })
+            .then(function(json) {
+                if (resultsContainer) resultsContainer.innerHTML = json.html; // same-origin server-rendered HTML
+                if (countBadge) countBadge.textContent = json.count + ' ' + (json.count === 1 ? 'tessera' : 'tessere');
+
+                // Update browser URL (without ajax param)
+                params.delete('ajax');
+                history.replaceState(null, '', 'index.php?' + params.toString());
+            })
+            .catch(function(err) { console.error('AJAX filter error:', err); });
+    }
+})();
+</script>
+
 <!-- Modal -->
 <div class="modal fade" id="tesseraModal" tabindex="-1">
 <div class="modal-dialog">
 <div class="modal-content">
     <div class="modal-header"><h5 class="modal-title"><?php echo $editingTessera ? 'Modifica' : 'Crea'; ?> Tessera</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
     <form method="POST">
+        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
         <div class="modal-body">
             <input type="hidden" name="id" value="<?php echo $editingTessera['id'] ?? ''; ?>">
             <div class="mb-3">
@@ -505,7 +650,7 @@ $chart_revenue = array_map(fn($r)=> (int)round((float)$r['ricavi']), $agg_rows);
         </div>
         <div class="modal-footer">
             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button>
-            <button type="submit" class="btn btn-primary">Salva</button>
+            <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg me-1"></i>Salva</button>
         </div>
     </form>
 </div>

@@ -30,6 +30,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (!$user['attivo']) {
                     $error = 'Il tuo account è stato disattivato.';
                 } else {
+                    // Rigenera ID sessione per prevenire session fixation
+                    session_regenerate_id(true);
+
                     // Imposta le variabili di sessione
                     $_SESSION['user_id'] = $user['id'];
                     $_SESSION['user_email'] = $user['email'];
@@ -69,48 +72,146 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login - Associazione Soci Manager</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <title>Login - Gestione Associazioni</title>
+    <link href="../assets/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
+    <link href="../assets/vendor/bootstrap-icons/font/bootstrap-icons.min.css" rel="stylesheet">
     <style>
-        body { background-color: #f8f9fa; }
-        .login-container { min-height: 100vh; }
-        .login-card { max-width: 400px; width: 100%; }
+        @font-face {
+            font-family: 'Inter';
+            src: url('../assets/fonts/InterVariable.woff2') format('woff2');
+            font-weight: 100 900;
+            font-style: normal;
+            font-display: swap;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #F3F4F6;
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            -webkit-font-smoothing: antialiased;
+        }
+        .login-wrapper {
+            width: 100%;
+            max-width: 400px;
+            padding: 1rem;
+        }
+        .login-brand {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        .login-brand-icon {
+            width: 48px;
+            height: 48px;
+            background: #FF7B11;
+            border-radius: 12px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 1rem;
+        }
+        .login-brand-icon i {
+            color: #FFFFFF;
+            font-size: 1.5rem;
+        }
+        .login-brand h1 {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: #111827;
+            margin: 0 0 0.25rem;
+        }
+        .login-brand p {
+            font-size: 0.875rem;
+            color: #9CA3AF;
+            margin: 0;
+        }
+        .login-card {
+            background: #FFFFFF;
+            border: 1px solid #E5E7EB;
+            border-radius: 12px;
+            padding: 2rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        }
+        .form-label {
+            font-size: 0.8125rem;
+            font-weight: 500;
+            color: #4B5563;
+            margin-bottom: 0.375rem;
+        }
+        .form-control {
+            border: 1px solid #D1D5DB;
+            border-radius: 6px;
+            padding: 0.5rem 0.75rem;
+            font-size: 0.875rem;
+            color: #111827;
+            transition: border-color 150ms, box-shadow 150ms;
+        }
+        .form-control:focus {
+            border-color: #FF7B11;
+            box-shadow: 0 0 0 3px rgba(255,123,17,0.15);
+            outline: none;
+        }
+        .form-control::placeholder { color: #9CA3AF; }
+        .btn-login {
+            width: 100%;
+            background: #FF7B11;
+            border: none;
+            color: #FFFFFF;
+            font-weight: 600;
+            font-size: 0.875rem;
+            padding: 0.625rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 150ms;
+        }
+        .btn-login:hover { background: #E86A00; }
+        .btn-login:active { transform: translateY(0); }
+        .alert {
+            border: none;
+            border-left: 3px solid #DC2626;
+            background: #FEE2E2;
+            color: #7F1D1D;
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+            font-size: 0.8125rem;
+            margin-bottom: 1rem;
+        }
     </style>
 </head>
 <body>
-    <div class="container d-flex justify-content-center align-items-center login-container">
-        <div class="card shadow-sm login-card">
-            <div class="card-body p-4 p-md-5">
-                <div class="text-center mb-4">
-                    <i class="bi bi-people-fill fs-1 text-primary"></i>
-                    <h4 class="mt-2">Gestione Soci</h4>
-                    <p class="text-muted">Accedi al tuo account</p>
-                </div>
-                
-                <?php if ($error): ?>
-                    <div class="alert alert-danger" role="alert">
-                        <?php echo $error; ?>
-                    </div>
-                <?php endif; ?>
-                
-                <form method="POST" action="login.php">
-                    <div class="mb-3">
-                        <label for="email" class="form-label">Email</label>
-                        <input type="email" class="form-control" id="email" name="email" required>
-                    </div>
-                    <div class="mb-3">
-                        <label for="password" class="form-label">Password</label>
-                        <input type="password" class="form-control" id="password" name="password" required>
-                    </div>
-                    <div class="d-grid">
-                        <button type="submit" class="btn btn-primary">Accedi</button>
-                    </div>
-                </form>
+    <div class="login-wrapper">
+        <div class="login-brand">
+            <div class="login-brand-icon">
+                <i class="bi bi-people-fill"></i>
             </div>
+            <h1>Gestione Associazioni</h1>
+            <p>Accedi al pannello di gestione</p>
+        </div>
+
+        <?php if ($error): ?>
+            <div class="alert" role="alert">
+                <?php echo htmlspecialchars($error); ?>
+            </div>
+        <?php endif; ?>
+
+        <div class="login-card">
+            <form method="POST" action="login.php">
+                <div class="mb-3">
+                    <label for="email" class="form-label">Email</label>
+                    <input type="email" class="form-control" id="email" name="email" placeholder="nome@associazione.it" required>
+                </div>
+                <div class="mb-3">
+                    <label for="password" class="form-label">Password</label>
+                    <input type="password" class="form-control" id="password" name="password" placeholder="La tua password" required>
+                </div>
+                <button type="submit" class="btn-login">Accedi</button>
+            </form>
         </div>
     </div>
-    
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script src="../assets/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>

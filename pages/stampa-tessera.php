@@ -166,7 +166,8 @@ if (!$data) {
         </div>
     </div>
 
-    <button class="no-print" onclick="window.print()" style="position: fixed; top: 20px; right: 20px; padding: 10px 20px; cursor: pointer;">Stampa</button>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <button class="no-print" onclick="window.print()" style="position: fixed; top: 20px; right: 20px; padding: 8px 20px; cursor: pointer; background-color: #FF7B11; color: #fff; border: none; border-radius: 6px; font-family: 'Inter', sans-serif; font-size: 0.9rem; font-weight: 600; box-shadow: 0 2px 8px rgba(255,123,17,0.3);"><i class="bi bi-printer me-1"></i> Stampa</button>
 
 </body>
 </html>

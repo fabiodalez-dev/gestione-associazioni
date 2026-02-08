@@ -4,10 +4,12 @@
 if (!isUserLoggedIn()) {
     redirect('auth/login.php');
 }
+if (!isset($_SESSION['associazione_id'])) {
+    redirect('index.php?page=dashboard');
+}
 
 $is_super_admin = ($_SESSION['user_role'] ?? '') === 'super_admin';
-$associazione_id = $_SESSION['associazione_id'] ?? null;
-$assoc_filter = $is_super_admin ? ($_GET['assoc_id'] ?? 'all') : ($associazione_id ?? 'all');
+$associazione_id = $_SESSION['associazione_id'];
 $message = '';
 $messageType = '';
 
@@ -27,22 +29,25 @@ function getQuotaStatus($quota) {
 
 // Gestione Azioni POST
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (isset($_POST['delete_id'])) {
+    if (!validateCSRFToken($_POST['csrf_token'] ?? '')) {
+        $message = "Errore di sicurezza: token CSRF non valido.";
+        $messageType = "danger";
+    } elseif (isset($_POST['delete_id'])) {
         $stmt = $pdo->prepare("DELETE FROM quote WHERE id = ? AND associazione_id = ?");
-        $stmt->execute([$_POST['delete_id'], $associazione_id ?? ($assoc_filter !== 'all' ? $assoc_filter : null)]);
+        $stmt->execute([$_POST['delete_id'], $associazione_id]);
         $message = "Quota eliminata con successo.";
         $messageType = "success";
     } elseif (isset($_POST['pay_id'])) {
-        $target_assoc = $associazione_id ?? ($assoc_filter !== 'all' ? $assoc_filter : null);
+        $associazione_id = $associazione_id;
         $stmt = $pdo->prepare("UPDATE quote SET data_pagamento = ? WHERE id = ? AND associazione_id = ?");
-        $stmt->execute([$_POST['payment_date'], $_POST['pay_id'], $target_assoc]);
+        $stmt->execute([$_POST['payment_date'], $_POST['pay_id'], $associazione_id]);
         
         // Logga attività
         $stmt_socio = $pdo->prepare("SELECT socio_id, importo, anno FROM quote WHERE id = ?");
         $stmt_socio->execute([$_POST['pay_id']]);
         $quota_info = $stmt_socio->fetch();
         if ($quota_info) {
-            logSocioActivity($pdo, $target_assoc, $quota_info['socio_id'], 'Pagamento Quota', "Pagata quota di €{$quota_info['importo']} per l'anno {$quota_info['anno']}.");
+            logSocioActivity($pdo, $associazione_id, $quota_info['socio_id'], 'Pagamento Quota', "Pagata quota di €{$quota_info['importo']} per l'anno {$quota_info['anno']}.");
         }
 
         $message = "Pagamento registrato con successo.";
@@ -57,12 +62,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($id) {
         $stmt = $pdo->prepare("UPDATE quote SET socio_id=?, anno=?, importo=?, data_scadenza=?, tipo=? WHERE id=? AND associazione_id=?");
-        $stmt->execute([$socio_id, $anno, $importo, $data_scadenza, $tipo, $id, $associazione_id ?? ($assoc_filter !== 'all' ? $assoc_filter : null)]);
+        $stmt->execute([$socio_id, $anno, $importo, $data_scadenza, $tipo, $id, $associazione_id]);
             $message = "Quota aggiornata.";
         } else {
             $new_id = generateUuid();
             $stmt = $pdo->prepare("INSERT INTO quote (id, associazione_id, socio_id, anno, importo, data_scadenza, tipo) VALUES (?, ?, ?, ?, ?, ?, ?)");
-            $stmt->execute([$new_id, ($associazione_id ?? ($assoc_filter !== 'all' ? $assoc_filter : null)), $socio_id, $anno, $importo, $data_scadenza, $tipo]);
+            $stmt->execute([$new_id, ($associazione_id), $socio_id, $anno, $importo, $data_scadenza, $tipo]);
             $message = "Quota creata.";
         }
         $messageType = "success";
@@ -71,10 +76,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // Recupero Dati
 $editingQuota = null;
+$editingSocioName = '';
 if (isset($_GET['edit'])) {
-    $stmt = $pdo->prepare("SELECT * FROM quote WHERE id = ? AND associazione_id = ?");
+    $stmt = $pdo->prepare("SELECT q.*, CONCAT(s.cognome, ' ', s.nome) AS socio_nome FROM quote q LEFT JOIN soci s ON q.socio_id = s.id WHERE q.id = ? AND q.associazione_id = ?");
     $stmt->execute([$_GET['edit'], $associazione_id]);
     $editingQuota = $stmt->fetch();
+    if ($editingQuota) {
+        $editingSocioName = $editingQuota['socio_nome'] ?? '';
+    }
 }
 
 $payingQuota = null;
@@ -84,13 +93,12 @@ if (isset($_GET['pay'])) {
     $payingQuota = $stmt->fetch();
 }
 
-$lists_assoc = $associazione_id ?? ($assoc_filter !== 'all' ? $assoc_filter : null);
 $stmt_soci = $pdo->prepare("SELECT id, CONCAT(cognome, ' ', nome) as nome_completo FROM soci WHERE associazione_id = ? AND stato = 'Attivo' ORDER BY cognome, nome");
-$stmt_soci->execute([$lists_assoc]);
+$stmt_soci->execute([$associazione_id]);
 $soci_attivi = $stmt_soci->fetchAll();
 
 $stmt_anni = $pdo->prepare("SELECT DISTINCT anno FROM quote WHERE associazione_id = ? ORDER BY anno DESC");
-$stmt_anni->execute([$lists_assoc]);
+$stmt_anni->execute([$associazione_id]);
 $availableYears = $stmt_anni->fetchAll(PDO::FETCH_COLUMN);
 
 // Fetch e filtro quote
@@ -99,7 +107,7 @@ $yearFilter = $_GET['year'] ?? 'Tutti';
 
 $sql = "SELECT q.*, s.nome, s.cognome, a.nome AS associazione_nome FROM quote q JOIN soci s ON q.socio_id = s.id JOIN associazioni a ON a.id = q.associazione_id WHERE 1=1";
 $params = [];
-if ($lists_assoc) { $sql .= " AND q.associazione_id = ?"; $params[] = $lists_assoc; }
+$sql .= " AND q.associazione_id = ?"; $params[] = $associazione_id;
 
 if ($yearFilter !== 'Tutti') {
     $sql .= " AND q.anno = ?";
@@ -123,13 +131,11 @@ $quote_filtrate = array_filter($all_quotes, function($q) use ($statusFilter) {
 </div>
 
 <?php if ($message): ?>
-<div class="alert alert-<?php echo $messageType; ?>">><?php echo $message; ?></div>
+<div class="alert alert-<?php echo htmlspecialchars($messageType); ?>"><?php echo htmlspecialchars($message); ?></div>
 <?php endif; ?>
 
 <div class="d-flex justify-content-between mb-3">
-    <?php if (!($is_super_admin && $assoc_filter === 'all')): ?>
-        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#quotaModal"><i class="bi bi-plus-lg"></i> Aggiungi Quota</button>
-    <?php endif; ?>
+    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#quotaModal"><i class="bi bi-plus-lg"></i> Aggiungi Quota</button>
 </div>
 
 <!-- Filtri -->
@@ -137,17 +143,6 @@ $quote_filtrate = array_filter($all_quotes, function($q) use ($statusFilter) {
     <div class="card-body">
         <form method="GET" class="row g-3 align-items-center">
             <input type="hidden" name="page" value="quote">
-            <?php if ($is_super_admin): ?>
-            <div class="col-md-4">
-                <label class="form-label">Associazione</label>
-                <select name="assoc_id" class="form-select" onchange="this.form.submit()">
-                    <option value="all" <?php echo ($assoc_filter==='all')?'selected':''; ?>>Tutte le associazioni</option>
-                    <?php foreach ($pdo->query("SELECT id, nome FROM associazioni ORDER BY nome")->fetchAll() as $a): ?>
-                        <option value="<?php echo $a['id']; ?>" <?php echo ($assoc_filter===$a['id'])?'selected':''; ?>><?php echo htmlspecialchars($a['nome']); ?></option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-            <?php endif; ?>
             <div class="col-md-6">
                 <label class="form-label">Filtra per Stato</label>
                 <div class="btn-group w-100 flex-wrap text-wrap filter-btn-group">
@@ -199,7 +194,7 @@ $quote_filtrate = array_filter($all_quotes, function($q) use ($statusFilter) {
                     <a href="index.php?page=quote&pay=<?php echo $q['id']; ?>" class="btn btn-sm btn-outline-success"><i class="bi bi-check-lg"></i> Paga</a>
                     <?php endif; ?>
                     <a href="index.php?page=quote&edit=<?php echo $q['id']; ?>" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil"></i></a>
-                    <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questa quota?')"><input type="hidden" name="delete_id" value="<?php echo $q['id']; ?>"><button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button></form>
+                    <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questa quota?')"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="delete_id" value="<?php echo $q['id']; ?>"><button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button></form>
                 </td>
             </tr>
         <?php endforeach; ?>
@@ -232,7 +227,7 @@ $quote_filtrate = array_filter($all_quotes, function($q) use ($statusFilter) {
                 <a href="index.php?page=quote&pay=<?php echo $q['id']; ?>" class="btn btn-sm btn-outline-success"><i class="bi bi-check-lg me-1"></i>Paga</a>
                 <?php endif; ?>
                 <a href="index.php?page=quote&edit=<?php echo $q['id']; ?>" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil me-1"></i>Modifica</a>
-                <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questa quota?')"><input type="hidden" name="delete_id" value="<?php echo $q['id']; ?>"><button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash me-1"></i>Elimina</button></form>
+                <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questa quota?')"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="delete_id" value="<?php echo $q['id']; ?>"><button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash me-1"></i>Elimina</button></form>
             </div>
         </div>
         <?php endforeach; ?>
@@ -244,16 +239,24 @@ $quote_filtrate = array_filter($all_quotes, function($q) use ($statusFilter) {
 <div class="modal-dialog"><div class="modal-content">
     <div class="modal-header"><h5 class="modal-title"><?php echo $editingQuota ? 'Modifica' : 'Crea'; ?> Quota</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
     <form method="POST">
+        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
         <div class="modal-body">
             <input type="hidden" name="id" value="<?php echo $editingQuota['id'] ?? ''; ?>">
-            <div class="mb-3"><label>Socio</label><select name="socio_id" class="form-select" required><?php foreach ($soci_attivi as $s): ?><option value="<?php echo $s['id']; ?>" <?php echo ($editingQuota['socio_id'] ?? '') == $s['id'] ? 'selected' : ''; ?>><?php echo htmlspecialchars($s['nome_completo']); ?></option><?php endforeach; ?></select></div>
+            <div class="mb-3">
+                <label>Socio</label>
+                <div class="autocomplete-wrapper">
+                    <input type="hidden" name="socio_id" id="quotaSocioId" value="<?php echo htmlspecialchars($editingQuota['socio_id'] ?? ''); ?>" required>
+                    <input type="text" class="form-control" id="quotaSocioSearch" autocomplete="off" placeholder="Cerca socio per nome o cognome..." value="<?php echo htmlspecialchars($editingSocioName); ?>">
+                    <div class="autocomplete-results" id="quotaSocioResults"></div>
+                </div>
+            </div>
             <div class="row"><div class="col-md-6 mb-3"><label>Anno</label><input type="number" name="anno" class="form-control" value="<?php echo $editingQuota['anno'] ?? date('Y'); ?>" required></div><div class="col-md-6 mb-3"><label>Importo (€)</label><input type="number" step="0.01" name="importo" class="form-control" value="<?php echo $editingQuota['importo'] ?? '50.00'; ?>" required></div></div>
             <div class="mb-3"><label>Data Scadenza</label><input type="date" name="data_scadenza" class="form-control" value="<?php echo htmlspecialchars($editingQuota['data_scadenza'] ?? ''); ?>" required></div>
             <div class="mb-3"><label>Tipo</label><input type="text" name="tipo" class="form-control" value="<?php echo htmlspecialchars($editingQuota['tipo'] ?? 'Quota Associativa'); ?>" required></div>
         </div>
         <div class="modal-footer">
             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button>
-            <button type="submit" class="btn btn-primary">Salva</button>
+            <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg me-1"></i>Salva</button>
         </div>
     </form>
 </div></div>
@@ -265,6 +268,7 @@ $quote_filtrate = array_filter($all_quotes, function($q) use ($statusFilter) {
 <div class="modal-dialog"><div class="modal-content">
     <div class="modal-header"><h5 class="modal-title">Registra Pagamento</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
     <form method="POST">
+        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
         <div class="modal-body">
             <input type="hidden" name="pay_id" value="<?php echo $payingQuota['id']; ?>">
             <p><strong>Socio:</strong> <?php echo htmlspecialchars($payingQuota['cognome'] . ' ' . $payingQuota['nome']); ?></p>
@@ -280,6 +284,84 @@ $quote_filtrate = array_filter($all_quotes, function($q) use ($statusFilter) {
 </div>
 <script>document.addEventListener('DOMContentLoaded', () => new bootstrap.Modal(document.getElementById('paymentModal')).show());</script>
 <?php endif; ?>
+
+<script>
+(function() {
+    const searchInput = document.getElementById('quotaSocioSearch');
+    const hiddenInput = document.getElementById('quotaSocioId');
+    const resultsDiv = document.getElementById('quotaSocioResults');
+    if (!searchInput || !hiddenInput || !resultsDiv) return;
+
+    let debounceTimer = null;
+
+    searchInput.addEventListener('input', function() {
+        clearTimeout(debounceTimer);
+        const q = this.value.trim();
+        if (q.length < 1) {
+            resultsDiv.classList.remove('show');
+            return;
+        }
+        debounceTimer = setTimeout(function() {
+            fetch('api/soci_search.php?q=' + encodeURIComponent(q))
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    resultsDiv.textContent = '';
+                    if (!Array.isArray(data) || data.length === 0) {
+                        var noRes = document.createElement('div');
+                        noRes.className = 'autocomplete-no-results';
+                        noRes.textContent = 'Nessun socio trovato';
+                        resultsDiv.appendChild(noRes);
+                        resultsDiv.classList.add('show');
+                        return;
+                    }
+                    data.forEach(function(item) {
+                        var div = document.createElement('div');
+                        div.className = 'autocomplete-item';
+                        div.textContent = item.nome_completo;
+                        div.addEventListener('mousedown', function(e) {
+                            e.preventDefault();
+                            hiddenInput.value = item.id;
+                            searchInput.value = item.nome_completo;
+                            resultsDiv.classList.remove('show');
+                        });
+                        resultsDiv.appendChild(div);
+                    });
+                    resultsDiv.classList.add('show');
+                })
+                .catch(function() { resultsDiv.classList.remove('show'); });
+        }, 300);
+    });
+
+    searchInput.addEventListener('blur', function() {
+        setTimeout(function() { resultsDiv.classList.remove('show'); }, 200);
+    });
+
+    searchInput.addEventListener('focus', function() {
+        if (resultsDiv.childElementCount > 0) resultsDiv.classList.add('show');
+    });
+
+    // Clear hidden value if user clears the text
+    searchInput.addEventListener('change', function() {
+        if (this.value.trim() === '') {
+            hiddenInput.value = '';
+        }
+    });
+
+    // Form validation: ensure socio is selected
+    var quotaForm = searchInput.closest('form');
+    if (quotaForm) {
+        quotaForm.addEventListener('submit', function(e) {
+            if (!hiddenInput.value) {
+                e.preventDefault();
+                searchInput.classList.add('is-invalid');
+                searchInput.focus();
+            } else {
+                searchInput.classList.remove('is-invalid');
+            }
+        });
+    }
+})();
+</script>
 
 <?php if ($editingQuota): ?>
 <script>document.addEventListener('DOMContentLoaded', () => new bootstrap.Modal(document.getElementById('quotaModal')).show());</script>

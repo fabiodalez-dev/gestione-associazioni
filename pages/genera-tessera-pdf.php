@@ -62,7 +62,7 @@ try {
         $stmt_count = $pdo->prepare("SELECT COUNT(*) as count FROM tessere WHERE associazione_id = ? AND anno_validita = ?");
         $stmt_count->execute([$associazione_id, $anno_corrente]);
         $count = $stmt_count->fetch()['count'] + 1;
-        $numero_tessera = $anno_corrente . str_pad($count, 4, '0', STR_PAD_LEFT);
+        $numero_tessera = $anno_corrente . str_pad((string)$count, 4, '0', STR_PAD_LEFT);
         
         // Tipo scadenza e data scadenza in base alla configurazione dell'associazione
         $cfg_stmt = $pdo->prepare("SELECT tipo_scadenza_default, giorni_notifica_scadenza FROM associazioni WHERE id = ?");
@@ -90,8 +90,9 @@ try {
     }
     
 } catch (PDOException $e) {
+    error_log('genera-tessera-pdf.php PDOException: ' . $e->getMessage());
     http_response_code(500);
-    die("Errore nel recupero dati: " . $e->getMessage());
+    die("Errore nel recupero dati. Riprova più tardi.");
 }
 
 // Carica l'autoloader di Composer per Dompdf

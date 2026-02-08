@@ -4,65 +4,45 @@
 if (!isUserLoggedIn()) {
     redirect('auth/login.php');
 }
+if (!isset($_SESSION['associazione_id'])) {
+    redirect('index.php?page=dashboard');
+}
 
 $is_super_admin = ($_SESSION['user_role'] ?? '') === 'super_admin';
-$associazione_id = $_SESSION['associazione_id'] ?? null;
-$assoc_filter = $is_super_admin ? ($_GET['assoc_id'] ?? 'all') : ($associazione_id ?? 'all');
+$associazione_id = $_SESSION['associazione_id'];
 $message = $_GET['message'] ?? '';
 $messageType = $_GET['messageType'] ?? '';
-
-// Configurazioni associazione utili ai filtri (tipo scadenza, preavviso)
-$lists_assoc_id = $is_super_admin ? ($assoc_filter !== 'all' ? $assoc_filter : null) : $associazione_id;
 
 // Configurazione di default
 $assoc_cfg = ['tipo_scadenza_default' => 'solare', 'giorni_notifica_scadenza' => 30];
 $campi_personalizzati = $tags_disponibili = $tipi_socio = $categorie_socio = $sedi = [];
 
-if ($lists_assoc_id) {
-    // Carica configurazione associazione specifica
-    $stmt_assoc_cfg = $pdo->prepare("SELECT tipo_scadenza_default, giorni_notifica_scadenza FROM associazioni WHERE id = ? LIMIT 1");
-    $stmt_assoc_cfg->execute([$lists_assoc_id]);
-    $assoc_cfg = $stmt_assoc_cfg->fetch() ?: $assoc_cfg;
+// Carica configurazione associazione specifica
+$stmt_assoc_cfg = $pdo->prepare("SELECT tipo_scadenza_default, giorni_notifica_scadenza FROM associazioni WHERE id = ? LIMIT 1");
+$stmt_assoc_cfg->execute([$associazione_id]);
+$assoc_cfg = $stmt_assoc_cfg->fetch() ?: $assoc_cfg;
 
-    // Recupero campi personalizzati e tags per l'associazione
-    $stmt_campi = $pdo->prepare("SELECT * FROM campi_personalizzati WHERE associazione_id = ? ORDER BY nome_campo");
-    $stmt_campi->execute([$lists_assoc_id]);
-    $campi_personalizzati = $stmt_campi->fetchAll();
+// Recupero campi personalizzati e tags per l'associazione
+$stmt_campi = $pdo->prepare("SELECT * FROM campi_personalizzati WHERE associazione_id = ? ORDER BY nome_campo");
+$stmt_campi->execute([$associazione_id]);
+$campi_personalizzati = $stmt_campi->fetchAll();
 
-    $stmt_tags = $pdo->prepare("SELECT * FROM tags WHERE associazione_id = ? ORDER BY nome_tag");
-    $stmt_tags->execute([$lists_assoc_id]);
-    $tags_disponibili = $stmt_tags->fetchAll();
+$stmt_tags = $pdo->prepare("SELECT * FROM tags WHERE associazione_id = ? ORDER BY nome_tag");
+$stmt_tags->execute([$associazione_id]);
+$tags_disponibili = $stmt_tags->fetchAll();
 
-    // Recupero dati aggiuntivi per i form
-    $stmt_tipi = $pdo->prepare("SELECT * FROM tipi_socio WHERE associazione_id = ? ORDER BY nome");
-    $stmt_tipi->execute([$lists_assoc_id]);
-    $tipi_socio = $stmt_tipi->fetchAll();
+// Recupero dati aggiuntivi per i form
+$stmt_tipi = $pdo->prepare("SELECT * FROM tipi_socio WHERE associazione_id = ? ORDER BY nome");
+$stmt_tipi->execute([$associazione_id]);
+$tipi_socio = $stmt_tipi->fetchAll();
 
-    $stmt_categorie = $pdo->prepare("SELECT * FROM categorie_socio WHERE associazione_id = ? ORDER BY nome");
-    $stmt_categorie->execute([$lists_assoc_id]);
-    $categorie_socio = $stmt_categorie->fetchAll();
+$stmt_categorie = $pdo->prepare("SELECT * FROM categorie_socio WHERE associazione_id = ? ORDER BY nome");
+$stmt_categorie->execute([$associazione_id]);
+$categorie_socio = $stmt_categorie->fetchAll();
 
-    $stmt_sedi = $pdo->prepare("SELECT * FROM sedi WHERE associazione_id = ? ORDER BY nome");
-    $stmt_sedi->execute([$lists_assoc_id]);
-    $sedi = $stmt_sedi->fetchAll();
-} elseif ($is_super_admin && $assoc_filter === 'all') {
-    // Per super_admin che visualizza "tutte" le associazioni, carica dati da tutte le associazioni
-    try {
-        $stmt_tipi = $pdo->prepare("SELECT DISTINCT ts.*, a.nome as associazione_nome FROM tipi_socio ts LEFT JOIN associazioni a ON ts.associazione_id = a.id ORDER BY a.nome, ts.nome");
-        $stmt_tipi->execute();
-        $tipi_socio = $stmt_tipi->fetchAll();
-
-        $stmt_categorie = $pdo->prepare("SELECT DISTINCT cs.*, a.nome as associazione_nome FROM categorie_socio cs LEFT JOIN associazioni a ON cs.associazione_id = a.id ORDER BY a.nome, cs.nome");
-        $stmt_categorie->execute();
-        $categorie_socio = $stmt_categorie->fetchAll();
-
-        $stmt_sedi = $pdo->prepare("SELECT DISTINCT s.*, a.nome as associazione_nome FROM sedi s LEFT JOIN associazioni a ON s.associazione_id = a.id ORDER BY a.nome, s.nome");
-        $stmt_sedi->execute();
-        $sedi = $stmt_sedi->fetchAll();
-    } catch (Exception $e) {
-        error_log('Error loading multi-association data: ' . $e->getMessage());
-    }
-}
+$stmt_sedi = $pdo->prepare("SELECT * FROM sedi WHERE associazione_id = ? ORDER BY nome");
+$stmt_sedi->execute([$associazione_id]);
+$sedi = $stmt_sedi->fetchAll();
 
 // Gestione Azioni POST
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -167,7 +147,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmt_count = $pdo->prepare("SELECT MAX(CAST(numero_socio AS UNSIGNED)) as max_num FROM soci WHERE associazione_id = ?");
                     $stmt_count->execute([$associazione_id]);
                     $max_num = $stmt_count->fetch()['max_num'] ?? 0;
-                    $socio_data['numero_socio'] = str_pad($max_num + 1, 3, '0', STR_PAD_LEFT);
+                    $socio_data['numero_socio'] = str_pad((string)($max_num + 1), 3, '0', STR_PAD_LEFT);
                 }
                 
                 $sql = "INSERT INTO soci (id, associazione_id, nome, cognome, email, numero_socio, data_nascita, data_iscrizione, stato, codice_fiscale, telefono, indirizzo, citta, provincia, cap, note, privacy_consenso, tipo_socio_id, categoria_socio_id, sede_id) VALUES (:id, :associazione_id, :nome, :cognome, :email, :numero_socio, :data_nascita, :data_iscrizione, :stato, :codice_fiscale, :telefono, :indirizzo, :citta, :provincia, :cap, :note, :privacy_consenso, :tipo_socio_id, :categoria_socio_id, :sede_id)";
@@ -192,7 +172,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmtCount = $pdo->prepare("SELECT COUNT(*) as cnt FROM tessere WHERE associazione_id = ? AND anno_validita = ?");
                     $stmtCount->execute([$associazione_id, $anno_corrente]);
                     $count = (int)($stmtCount->fetch()['cnt'] ?? 0) + 1;
-                    $numero_tessera = $anno_corrente . str_pad($count, 4, '0', STR_PAD_LEFT);
+                    $numero_tessera = $anno_corrente . str_pad((string)$count, 4, '0', STR_PAD_LEFT);
                     $data_emissione = date('Y-m-d');
                     $data_scadenza = ($tipo_scadenza === 'annuale') ? date('Y-m-d', strtotime($data_emissione . ' +1 year')) : ($anno_corrente . '-12-31');
                     $stmtInsT = $pdo->prepare("INSERT INTO tessere (id, associazione_id, socio_id, numero_tessera, anno_validita, data_emissione, data_scadenza, stato, tipo_scadenza) VALUES (?, ?, ?, ?, ?, ?, ?, 'Attiva', ?)");
@@ -311,9 +291,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pdo->commit();
         } catch (Exception $e) {
             $pdo->rollBack();
-            $message = "Errore: " . $e->getMessage();
+            error_log("soci.php save error: " . $e->getMessage());
+            $message = "Errore durante il salvataggio. Riprova più tardi.";
             $messageType = "danger";
-            error_log("Error saving socio: " . $e->getMessage());
         }
 
         if ($messageType === 'success') {
@@ -369,17 +349,12 @@ $sql = "SELECT s.*,
            )
         WHERE 1=1";
 $params = [];
-if (!$is_super_admin) {
-    $sql .= " AND s.associazione_id = ?";
-    $params[] = $associazione_id;
-} elseif ($assoc_filter !== 'all') {
-    $sql .= " AND s.associazione_id = ?";
-    $params[] = $assoc_filter;
-}
+$sql .= " AND s.associazione_id = ?";
+$params[] = $associazione_id;
 
-if ($lists_assoc_id) {
+if ($associazione_id) {
     $stmt_gruppi = $pdo->prepare("SELECT id, nome_gruppo FROM gruppi_dinamici WHERE associazione_id = ? ORDER BY nome_gruppo");
-    $stmt_gruppi->execute([$lists_assoc_id]);
+    $stmt_gruppi->execute([$associazione_id]);
     $gruppi_dinamici = $stmt_gruppi->fetchAll();
 } else {
     $gruppi_dinamici = [];
@@ -388,9 +363,9 @@ if ($lists_assoc_id) {
 // Preset filtri salvati
 $presets = [];
 try {
-    if ($lists_assoc_id) {
+    if ($associazione_id) {
         $stmt_presets = $pdo->prepare("SELECT id, name FROM saved_filters WHERE associazione_id = ? AND scope = 'soci' AND (user_id IS NULL OR user_id = ?) ORDER BY name");
-        $stmt_presets->execute([$lists_assoc_id, $_SESSION['user_id'] ?? null]);
+        $stmt_presets->execute([$associazione_id, $_SESSION['user_id'] ?? null]);
     } else {
         $stmt_presets = $pdo->prepare("SELECT id, name FROM saved_filters WHERE 1=0");
         $stmt_presets->execute();
@@ -412,9 +387,9 @@ $tessera_scadenza_filter = $_GET['tessera_scadenza'] ?? 'all';
 // Sovrascrivi con preset se richiesto
 if (isset($_GET['preset_id'])) {
     try {
-        if ($lists_assoc_id) {
+        if ($associazione_id) {
             $stmt_preset = $pdo->prepare("SELECT params_json FROM saved_filters WHERE id = ? AND associazione_id = ? LIMIT 1");
-            $stmt_preset->execute([$_GET['preset_id'], $lists_assoc_id]);
+            $stmt_preset->execute([$_GET['preset_id'], $associazione_id]);
         } else {
             $stmt_preset = $pdo->prepare("SELECT params_json FROM saved_filters WHERE 1=0");
             $stmt_preset->execute();
@@ -503,6 +478,197 @@ $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $soci = $stmt->fetchAll();
 
+// AJAX response mode — return only the results HTML + count as JSON
+if (isset($_GET['ajax']) && $_GET['ajax'] === '1') {
+    while (ob_get_level()) { ob_end_clean(); }
+    header('Content-Type: application/json; charset=utf-8');
+    ob_start();
+    // Re-use the same rendering code via include of inline section
+    if (empty($soci)): ?>
+<div class="table-empty">
+    <i class="bi bi-people"></i>
+    <h5>Nessun socio trovato</h5>
+    <p class="text-muted">Non ci sono soci che corrispondono ai criteri di ricerca.</p>
+    <a href="index.php?page=soci" class="btn btn-outline-primary">Rimuovi filtri</a>
+</div>
+<?php else: ?>
+<div class="responsive-table-wrapper">
+    <table class="table-desktop" id="sociTable">
+        <thead>
+            <tr>
+                <th>Socio</th>
+                <?php if ($is_super_admin): ?><th>Associazione</th><?php endif; ?>
+                <th>Contatti</th>
+                <th>Stato</th>
+                <th>Categoria/Tipo</th>
+                <th>Tessera</th>
+                <th>Tags</th>
+                <th class="text-end">Azioni</th>
+            </tr>
+        </thead>
+        <tbody data-animate="table-rows">
+        <?php foreach ($soci as $socio): ?>
+            <tr>
+                <td>
+                    <div>
+                        <a href="index.php?page=socio_dettaglio&id=<?php echo $socio['id']; ?>" class="fw-semibold text-decoration-none">
+                            <?php echo htmlspecialchars($socio['cognome'] . ' ' . $socio['nome']); ?>
+                        </a>
+                    </div>
+                    <small class="text-muted font-monospace"><?php echo htmlspecialchars($socio['numero_socio']); ?></small>
+                </td>
+                <?php if ($is_super_admin): ?>
+                <td><span class="badge bg-secondary"><?php echo htmlspecialchars($socio['associazione_nome'] ?? ''); ?></span></td>
+                <?php endif; ?>
+                <td>
+                    <div><?php echo htmlspecialchars($socio['email']); ?></div>
+                    <?php if (!empty($socio['telefono'])): ?>
+                        <small class="text-muted"><?php echo htmlspecialchars($socio['telefono']); ?></small>
+                    <?php endif; ?>
+                </td>
+                <td>
+                    <span class="badge bg-<?php echo strtolower($socio['stato']) === 'attivo' ? 'success' : 'warning'; ?>">
+                        <?php echo htmlspecialchars($socio['stato']); ?>
+                    </span>
+                </td>
+                <td>
+                    <?php if (!empty($socio['categoria_nome'])): ?>
+                        <div><span class="badge bg-info"><?php echo htmlspecialchars($socio['categoria_nome']); ?></span></div>
+                    <?php endif; ?>
+                    <?php if (!empty($socio['tipo_nome'])): ?>
+                        <div><small class="text-muted"><?php echo htmlspecialchars($socio['tipo_nome']); ?></small></div>
+                    <?php endif; ?>
+                </td>
+                <td>
+                    <?php if (!empty($socio['numero_tessera'])): ?>
+                        <div class="d-flex flex-column gap-1">
+                            <div><small class="text-muted">N.</small> <strong><?php echo htmlspecialchars($socio['numero_tessera']); ?></strong></div>
+                            <?php if (!empty($socio['template_tessera'])): ?>
+                                <span class="badge bg-secondary" style="font-size: 0.7rem;"><?php echo htmlspecialchars($socio['template_tessera']); ?></span>
+                            <?php endif; ?>
+                            <?php if (!empty($socio['data_scadenza'])):
+                                $scad = strtotime($socio['data_scadenza']);
+                                $today = strtotime(date('Y-m-d'));
+                                $daysNotice = (int)($assoc_cfg['giorni_notifica_scadenza'] ?? 30);
+                                $soon = strtotime("+{$daysNotice} days", $today);
+                                $badge = '';
+                                if ($scad < $today) $badge = '<span class="badge bg-danger">Scaduta</span>';
+                                elseif ($scad <= $soon) $badge = '<span class="badge bg-warning text-dark">In scadenza</span>';
+                                ?>
+                                <div><small class="text-muted">Scade:</small> <?php echo date('d/m/Y', $scad); ?> <?php echo $badge; ?></div>
+                            <?php endif; ?>
+                        </div>
+                    <?php else: ?>
+                        <span class="text-muted">—</span>
+                    <?php endif; ?>
+                </td>
+                <td>
+                    <div class="d-flex flex-wrap gap-1">
+                        <?php if($socio['tags']):
+                            foreach(explode(';', $socio['tags']) as $tag_str):
+                                if(strpos($tag_str, '|') !== false):
+                                    list($nome, $colore) = explode('|', $tag_str); ?>
+                                    <span class="badge" style="background-color: <?php echo htmlspecialchars($colore); ?>; color: white; font-size: 0.7rem;">
+                                        <?php echo htmlspecialchars($nome); ?>
+                                    </span>
+                                <?php endif;
+                            endforeach;
+                        endif; ?>
+                    </div>
+                </td>
+                <td>
+                    <div class="table-actions">
+                        <a href="index.php?page=soci&edit=<?php echo $socio['id']; ?>" class="btn btn-sm btn-outline-primary" title="Modifica"><i class="bi bi-pencil"></i></a>
+                        <a href="index.php?page=genera-tessera-pdf&socio_id=<?php echo $socio['id']; ?>" class="btn btn-sm btn-outline-success" title="Genera Tessera PDF" target="_blank"><i class="bi bi-credit-card"></i></a>
+                        <form method="POST" class="d-inline" onsubmit="return confirm('Sei sicuro di voler eliminare questo socio?')">
+                            <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
+                            <input type="hidden" name="delete_id" value="<?php echo $socio['id']; ?>">
+                            <button type="submit" class="btn btn-sm btn-outline-danger" title="Elimina"><i class="bi bi-trash"></i></button>
+                        </form>
+                    </div>
+                </td>
+            </tr>
+        <?php endforeach; ?>
+        </tbody>
+    </table>
+    <div class="table-mobile">
+        <?php foreach ($soci as $socio): ?>
+            <div class="table-card">
+                <div class="card-header-section">
+                    <div class="card-primary-info">
+                        <h5 class="card-title">
+                            <a href="index.php?page=socio_dettaglio&id=<?php echo $socio['id']; ?>" class="text-decoration-none">
+                                <?php echo htmlspecialchars($socio['cognome'] . ' ' . $socio['nome']); ?>
+                            </a>
+                        </h5>
+                        <div class="card-subtitle"><?php echo htmlspecialchars($socio['numero_socio']); ?></div>
+                    </div>
+                    <div class="card-status">
+                        <span class="badge bg-<?php echo strtolower($socio['stato']) === 'attivo' ? 'success' : 'warning'; ?>">
+                            <?php echo htmlspecialchars($socio['stato']); ?>
+                        </span>
+                    </div>
+                </div>
+                <div class="card-content">
+                    <?php if ($is_super_admin): ?>
+                    <div class="card-field"><span class="field-label">Associazione:</span><span class="field-value"><span class="badge bg-secondary"><?php echo htmlspecialchars($socio['associazione_nome'] ?? ''); ?></span></span></div>
+                    <?php endif; ?>
+                    <div class="card-field"><span class="field-label">Email:</span><span class="field-value"><?php echo htmlspecialchars($socio['email']); ?></span></div>
+                    <?php if (!empty($socio['telefono'])): ?>
+                    <div class="card-field"><span class="field-label">Telefono:</span><span class="field-value"><?php echo htmlspecialchars($socio['telefono']); ?></span></div>
+                    <?php endif; ?>
+                    <?php if (!empty($socio['categoria_nome']) || !empty($socio['tipo_nome'])): ?>
+                    <div class="card-field"><span class="field-label">Categoria/Tipo:</span><div class="field-value">
+                        <?php if (!empty($socio['categoria_nome'])): ?><span class="badge bg-info me-1"><?php echo htmlspecialchars($socio['categoria_nome']); ?></span><?php endif; ?>
+                        <?php if (!empty($socio['tipo_nome'])): ?><small class="text-muted"><?php echo htmlspecialchars($socio['tipo_nome']); ?></small><?php endif; ?>
+                    </div></div>
+                    <?php endif; ?>
+                    <?php if (!empty($socio['numero_tessera'])): ?>
+                    <div class="card-field"><span class="field-label">Tessera:</span><div class="field-value">
+                        <div><strong><?php echo htmlspecialchars($socio['numero_tessera']); ?></strong></div>
+                        <?php if (!empty($socio['data_scadenza'])):
+                            $scad = strtotime($socio['data_scadenza']);
+                            $today = strtotime(date('Y-m-d'));
+                            $daysNotice = (int)($assoc_cfg['giorni_notifica_scadenza'] ?? 30);
+                            $soon = strtotime("+{$daysNotice} days", $today);
+                            $badge = '';
+                            if ($scad < $today) $badge = '<span class="badge bg-danger">Scaduta</span>';
+                            elseif ($scad <= $soon) $badge = '<span class="badge bg-warning text-dark">In scadenza</span>';
+                            ?>
+                            <div><small>Scade: <?php echo date('d/m/Y', $scad); ?></small> <?php echo $badge; ?></div>
+                        <?php endif; ?>
+                    </div></div>
+                    <?php endif; ?>
+                    <?php if($socio['tags']): ?>
+                    <div class="card-field"><span class="field-label">Tags:</span><div class="card-tags">
+                        <?php foreach(explode(';', $socio['tags']) as $tag_str):
+                            if(strpos($tag_str, '|') !== false):
+                                list($nome, $colore) = explode('|', $tag_str); ?>
+                                <span class="badge" style="background-color: <?php echo htmlspecialchars($colore); ?>; color: white;"><?php echo htmlspecialchars($nome); ?></span>
+                            <?php endif;
+                        endforeach; ?>
+                    </div></div>
+                    <?php endif; ?>
+                </div>
+                <div class="card-actions">
+                    <a href="index.php?page=soci&edit=<?php echo $socio['id']; ?>" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil me-1"></i>Modifica</a>
+                    <a href="index.php?page=genera-tessera-pdf&socio_id=<?php echo $socio['id']; ?>" class="btn btn-sm btn-outline-success" target="_blank"><i class="bi bi-credit-card me-1"></i>PDF</a>
+                    <form method="POST" class="d-inline" onsubmit="return confirm('Sei sicuro di voler eliminare questo socio?')">
+                        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
+                        <input type="hidden" name="delete_id" value="<?php echo $socio['id']; ?>">
+                        <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash me-1"></i>Elimina</button>
+                    </form>
+                </div>
+            </div>
+        <?php endforeach; ?>
+    </div>
+</div>
+<?php endif;
+    $html = ob_get_clean();
+    echo json_encode(['count' => count($soci), 'html' => $html]);
+    exit;
+}
+
 ?>
 
 <div class="page-header">
@@ -512,36 +678,46 @@ $soci = $stmt->fetchAll();
             <p class="page-description">Visualizza e gestisci tutti i soci dell'associazione con strumenti avanzati di ricerca e filtro.</p>
         </div>
         <div class="d-flex gap-2 align-items-center">
-            <span class="badge bg-primary"><?php echo count($soci); ?> <?php echo count($soci) === 1 ? 'socio' : 'soci'; ?></span>
+            <span class="badge bg-primary" id="sociCount"><?php echo count($soci); ?> <?php echo count($soci) === 1 ? 'socio' : 'soci'; ?></span>
         </div>
     </div>
 </div>
 
 <?php if ($message): ?>
-<div class="alert alert-<?php echo $messageType; ?>"><?php echo $message; ?></div>
+<div class="alert alert-<?php echo htmlspecialchars($messageType); ?>"><?php echo htmlspecialchars($message); ?></div>
 <?php endif; ?>
 
 <div class="d-flex justify-content-between mb-3 align-items-start flex-wrap gap-2">
     <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#socioModal"><i class="bi bi-plus-lg"></i> Nuovo Socio</button>
-    <div class="ms-auto d-flex flex-column align-items-end gap-1" style="min-width:280px;">
-        <form method="GET" class="d-flex gap-2 flex-wrap align-items-stretch">
+    <div class="ms-auto d-flex flex-column align-items-end gap-2">
+        <form method="GET" class="d-flex align-items-center gap-2">
             <input type="hidden" name="page" value="soci">
-            <div class="input-group input-group-sm">
-                <select class="form-select" id="presetSelect" name="preset_id">
-                    <option value="">Seleziona preset</option>
-                    <?php foreach ($presets as $pr): ?>
-                        <option value="<?php echo htmlspecialchars($pr['id']); ?>" <?php echo (($_GET['preset_id'] ?? '') === $pr['id']) ? 'selected' : ''; ?>><?php echo htmlspecialchars($pr['name']); ?></option>
-                    <?php endforeach; ?>
-                </select>
-                <button type="submit" class="btn btn-outline-secondary">Carica</button>
-                <button type="button" class="btn btn-outline-danger" onclick="deletePreset()">Elimina</button>
-            </div>
+            <select class="form-select form-select-sm" id="presetSelect" name="preset_id" style="min-width:180px;">
+                <option value="">Preset filtri...</option>
+                <?php foreach ($presets as $pr): ?>
+                    <option value="<?php echo htmlspecialchars($pr['id']); ?>" <?php echo (($_GET['preset_id'] ?? '') === $pr['id']) ? 'selected' : ''; ?>><?php echo htmlspecialchars($pr['name']); ?></option>
+                <?php endforeach; ?>
+            </select>
+            <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-folder2-open me-1"></i>Carica</button>
+            <button type="button" class="btn btn-sm btn-outline-danger" onclick="deletePreset()" title="Elimina preset"><i class="bi bi-trash"></i></button>
         </form>
-        <div class="input-group input-group-sm" style="max-width: 420px;">
-            <span class="input-group-text">Salva preset</span>
-            <input type="text" form="savePresetForm" name="preset_name" class="form-control" placeholder="Nome" required>
-            <button type="submit" form="savePresetForm" class="btn btn-outline-primary">Salva</button>
-        </div>
+        <form id="savePresetInlineForm" method="POST" class="d-flex align-items-center gap-2">
+            <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
+            <input type="hidden" name="save_filter_preset" value="1">
+            <input type="hidden" name="search" value="<?php echo htmlspecialchars($searchTerm); ?>">
+            <input type="hidden" name="status" value="<?php echo htmlspecialchars($statusFilter); ?>">
+            <input type="hidden" name="sede_id" value="<?php echo htmlspecialchars($sede_filter); ?>">
+            <?php foreach ($categoria_filters as $cid): ?>
+                <input type="hidden" name="categoria_ids[]" value="<?php echo htmlspecialchars($cid); ?>">
+            <?php endforeach; ?>
+            <input type="hidden" name="tessera_template" value="<?php echo htmlspecialchars($tessera_template_filter); ?>">
+            <input type="hidden" name="tessera_scadenza" value="<?php echo htmlspecialchars($tessera_scadenza_filter); ?>">
+            <input type="hidden" name="has_tessera" value="<?php echo htmlspecialchars($has_tessera_filter); ?>">
+            <input type="hidden" name="tessera_stato" value="<?php echo htmlspecialchars($tessera_stato_filter); ?>">
+            <input type="hidden" name="gruppo_id" value="<?php echo htmlspecialchars($gruppo_id_filter); ?>">
+            <input type="text" name="preset_name" class="form-control form-control-sm" placeholder="Nome preset" required style="min-width:140px;">
+            <button type="submit" class="btn btn-sm btn-outline-primary"><i class="bi bi-bookmark-plus me-1"></i>Salva</button>
+        </form>
     </div>
 </div>
 
@@ -553,7 +729,7 @@ $soci = $stmt->fetchAll();
         </button>
     </div>
     <div class="card-body" id="filtersContainer">
-        <form method="GET" id="filtersForm">
+        <form method="GET" id="filtersForm" data-ajax-filter>
             <input type="hidden" name="page" value="soci">
             
             <!-- Riga 1: Filtri Tessera (Moved to top) -->
@@ -565,15 +741,8 @@ $soci = $stmt->fetchAll();
                         <select class="form-select" name="tessera_template">
                             <option value="all">Tutti i tipi</option>
                             <?php
-                            if ($lists_assoc_id) {
-                                $tpl_stmt = $pdo->prepare("SELECT DISTINCT template_tessera FROM tessere WHERE associazione_id = ? AND template_tessera IS NOT NULL ORDER BY template_tessera");
-                                $tpl_stmt->execute([$lists_assoc_id]);
-                            } elseif ($is_super_admin && $assoc_filter === 'all') {
-                                $tpl_stmt = $pdo->prepare("SELECT DISTINCT template_tessera FROM tessere WHERE template_tessera IS NOT NULL ORDER BY template_tessera");
-                                $tpl_stmt->execute();
-                            } else {
-                                $tpl_stmt = false;
-                            }
+                            $tpl_stmt = $pdo->prepare("SELECT DISTINCT template_tessera FROM tessere WHERE associazione_id = ? AND template_tessera IS NOT NULL ORDER BY template_tessera");
+                            $tpl_stmt->execute([$associazione_id]);
                             
                             if ($tpl_stmt) {
                                 foreach ($tpl_stmt->fetchAll(PDO::FETCH_COLUMN) as $tpl) {
@@ -617,22 +786,6 @@ $soci = $stmt->fetchAll();
             <!-- Riga 2: Controlli Principali -->
             <div class="filter-section mb-3">
                 <div class="row g-3 align-items-end">
-                    <?php if ($is_super_admin): ?>
-                    <div class="col-md-6 col-lg-3">
-                        <label class="form-label fw-semibold">
-                            <i class="bi bi-building me-1"></i>Associazione
-                        </label>
-                        <select class="form-select" name="assoc_id" onchange="this.form.submit()">
-                            <option value="all" <?php echo ($assoc_filter==='all')?'selected':''; ?>>Tutte le associazioni</option>
-                            <?php 
-                            $associazioni = $pdo->query("SELECT id, nome FROM associazioni ORDER BY nome")->fetchAll();
-                            foreach ($associazioni as $a): ?>
-                                <option value="<?php echo $a['id']; ?>" <?php echo ($assoc_filter===$a['id'])?'selected':''; ?>><?php echo htmlspecialchars($a['nome']); ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-                    <?php endif; ?>
-                    
                     <div class="col-md-6 col-lg-4">
                         <label class="form-label fw-semibold">
                             <i class="bi bi-search me-1"></i>Cerca per nome, cognome, email o codice fiscale
@@ -717,7 +870,7 @@ $soci = $stmt->fetchAll();
                         <label class="form-label fw-semibold">
                             <i class="bi bi-collection me-1"></i>Gruppo Rapido
                         </label>
-                        <select class="form-select" name="gruppo_id" onchange="this.form.submit()">
+                        <select class="form-select" name="gruppo_id">
                             <option value="all">Nessun gruppo applicato</option>
                             <?php foreach($gruppi_dinamici as $g): ?>
                                 <option value="<?php echo $g['id']; ?>" <?php echo ($gruppo_id_filter == $g['id']) ? 'selected' : ''; ?>><?php echo htmlspecialchars($g['nome_gruppo']); ?></option>
@@ -728,9 +881,6 @@ $soci = $stmt->fetchAll();
                     
                     <div class="col-md-6 col-lg-8">
                         <div class="d-flex justify-content-end gap-2 filter-actions flex-wrap">
-                            <button type="submit" class="btn btn-primary d-flex align-items-center gap-2">
-                                <i class="bi bi-funnel"></i><span>Applica Filtri</span>
-                            </button>
                             <a class="btn btn-outline-secondary d-flex align-items-center gap-2" href="index.php?page=soci">
                                 <i class="bi bi-arrow-counterclockwise"></i><span>Reset</span>
                             </a>
@@ -745,12 +895,12 @@ $soci = $stmt->fetchAll();
                                 'has_tessera' => $has_tessera_filter,
                                 'tessera_stato' => $tessera_stato_filter,
                             ];
-                            if ($is_super_admin && $assoc_filter !== 'all') { $export_params['assoc_id'] = $assoc_filter; }
+                            $export_params['assoc_id'] = $associazione_id;
                             if ($sede_filter !== 'all') { $export_params['sede_id'] = $sede_filter; }
                             foreach ($categoria_filters as $cid) { $export_params['categoria_ids'][] = $cid; }
                             $qs = http_build_query($export_params);
                             ?>
-                            <a class="btn btn-outline-success d-flex align-items-center gap-2" href="api/export.php?<?php echo htmlspecialchars($qs); ?>" target="_blank">
+                            <a class="btn btn-outline-success d-flex align-items-center gap-2" id="exportLink" href="api/export.php?<?php echo htmlspecialchars($qs); ?>" target="_blank">
                                 <i class="bi bi-download"></i><span>Esporta CSV</span>
                             </a>
                         </div>
@@ -778,33 +928,22 @@ function deletePreset(){
   if(!confirm('Eliminare il preset selezionato?')) return;
   const form = document.createElement('form');
   form.method = 'POST';
-  form.innerHTML = `
-    <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
-    <input type="hidden" name="preset_id_delete" value="${sel.value}">
-    <input type="hidden" name="delete_filter_preset" value="1">
-  `;
+  var csrfInput = document.createElement('input');
+  csrfInput.type = 'hidden'; csrfInput.name = 'csrf_token'; csrfInput.value = '<?php echo generateCSRFToken(); ?>';
+  var presetInput = document.createElement('input');
+  presetInput.type = 'hidden'; presetInput.name = 'preset_id_delete'; presetInput.value = sel.value;
+  var actionInput = document.createElement('input');
+  actionInput.type = 'hidden'; actionInput.name = 'delete_filter_preset'; actionInput.value = '1';
+  form.appendChild(csrfInput);
+  form.appendChild(presetInput);
+  form.appendChild(actionInput);
   document.body.appendChild(form);
   form.submit();
 }
 </script>
 
-<!-- Hidden form for saving preset to avoid nested forms -->
-<form id="savePresetForm" method="POST" class="d-none">
-    <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
-    <input type="hidden" name="save_filter_preset" value="1">
-    <input type="hidden" name="search" value="<?php echo htmlspecialchars($searchTerm); ?>">
-    <input type="hidden" name="status" value="<?php echo htmlspecialchars($statusFilter); ?>">
-    <input type="hidden" name="sede_id" value="<?php echo htmlspecialchars($sede_filter); ?>">
-    <?php foreach ($categoria_filters as $cid): ?>
-        <input type="hidden" name="categoria_ids[]" value="<?php echo htmlspecialchars($cid); ?>">
-    <?php endforeach; ?>
-    <input type="hidden" name="tessera_template" value="<?php echo htmlspecialchars($tessera_template_filter); ?>">
-    <input type="hidden" name="tessera_scadenza" value="<?php echo htmlspecialchars($tessera_scadenza_filter); ?>">
-    <input type="hidden" name="has_tessera" value="<?php echo htmlspecialchars($has_tessera_filter); ?>">
-    <input type="hidden" name="tessera_stato" value="<?php echo htmlspecialchars($tessera_stato_filter); ?>">
-    <input type="hidden" name="gruppo_id" value="<?php echo htmlspecialchars($gruppo_id_filter); ?>">
-</form>
 
+<div id="sociResults">
 <?php if (empty($soci)): ?>
 <div class="table-empty">
     <i class="bi bi-people"></i>
@@ -1050,6 +1189,7 @@ function deletePreset(){
     
 </div>
 <?php endif; ?>
+</div><!-- /sociResults -->
 
 <!-- Modale Aggiunta/Modifica Socio -->
 <div class="modal fade" id="socioModal" tabindex="-1">
@@ -1218,7 +1358,7 @@ function deletePreset(){
                 </div>
             <?php endif; ?>
             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button>
-            <button type="submit" class="btn btn-primary" id="salvaSocioBtn">Salva</button>
+            <button type="submit" class="btn btn-primary" id="salvaSocioBtn"><i class="bi bi-check-lg me-1"></i>Salva</button>
         </div>
     </form>
 </div></div>
@@ -1244,6 +1384,97 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 });
+</script>
+
+<script>
+(function() {
+    const form = document.getElementById('filtersForm');
+    if (!form) return;
+
+    const resultsContainer = document.getElementById('sociResults');
+    const countBadge = document.getElementById('sociCount');
+    const exportLink = document.getElementById('exportLink');
+    let debounceTimer = null;
+
+    // Prevent normal form submit
+    form.addEventListener('submit', function(e) { e.preventDefault(); fetchSoci(); });
+
+    // Debounced search input
+    const searchInput = form.querySelector('input[name="search"]');
+    if (searchInput) {
+        searchInput.addEventListener('input', function() {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(fetchSoci, 300);
+        });
+    }
+
+    // Instant change on all selects
+    form.querySelectorAll('select').forEach(function(sel) {
+        sel.addEventListener('change', fetchSoci);
+    });
+
+    // Categories multi-select also triggers on change
+    const catSelect = document.getElementById('categoriaSelect');
+    if (catSelect) catSelect.addEventListener('change', fetchSoci);
+
+    // Override select/clear all categories to trigger fetch
+    const origSelectAll = window.selectAllCategories;
+    window.selectAllCategories = function() {
+        origSelectAll();
+        fetchSoci();
+    };
+    const origClearAll = window.clearAllCategories;
+    window.clearAllCategories = function() {
+        origClearAll();
+        fetchSoci();
+    };
+
+    function fetchSoci() {
+        const data = new FormData(form);
+        const params = new URLSearchParams();
+        for (const [key, value] of data.entries()) {
+            params.append(key, value);
+        }
+        params.set('ajax', '1');
+
+        // Disable gruppo_id-dependent fields based on selection
+        const gruppoSel = form.querySelector('select[name="gruppo_id"]');
+        if (gruppoSel && gruppoSel.value !== 'all') {
+            if (searchInput) searchInput.disabled = true;
+            const statusSel = form.querySelector('select[name="status"]');
+            if (statusSel) statusSel.disabled = true;
+        } else {
+            if (searchInput) searchInput.disabled = false;
+            const statusSel = form.querySelector('select[name="status"]');
+            if (statusSel) statusSel.disabled = false;
+        }
+
+        // Note: The HTML returned by this endpoint is server-rendered PHP with
+        // htmlspecialchars() on all outputs (same code path as the full page load),
+        // served from the same origin. This is safe to insert into the DOM.
+        fetch('index.php?' + params.toString())
+            .then(function(r) { return r.json(); })
+            .then(function(json) {
+                if (resultsContainer) resultsContainer.innerHTML = json.html; // same-origin server-rendered HTML
+                if (countBadge) countBadge.textContent = json.count + ' ' + (json.count === 1 ? 'socio' : 'soci');
+
+                // Update export link
+                if (exportLink) {
+                    const ep = new URLSearchParams(params);
+                    ep.delete('page');
+                    ep.delete('ajax');
+                    ep.set('type', 'soci');
+                    ep.set('assoc_id', '<?php echo htmlspecialchars($associazione_id); ?>');
+                    exportLink.href = 'api/export.php?' + ep.toString();
+                }
+
+                // Update browser URL (without ajax param)
+                params.delete('ajax');
+                history.replaceState(null, '', 'index.php?' + params.toString());
+            })
+            .catch(function(err) { console.error('AJAX filter error:', err); });
+    }
+})();
 </script>
 
 <?php if ($editingSocio): ?>

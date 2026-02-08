@@ -143,7 +143,7 @@ $storico = $stmt_storico->fetchAll();
                     <div class="mb-3"><label>File</label><input type="file" name="file_documento" class="form-control" required></div>
                     <div class="mb-3"><label>Descrizione</label><input type="text" name="descrizione_documento" class="form-control" placeholder="Es. Certificato medico agonistico"></div>
                     <div class="mb-3"><label>Data Scadenza (opzionale)</label><input type="date" name="data_scadenza_documento" class="form-control"></div>
-                    <button type="submit" class="btn btn-primary">Carica</button>
+                    <button type="submit" class="btn btn-primary"><i class="bi bi-upload me-1"></i>Carica</button>
                 </form>
             </div>
         </div>
@@ -157,7 +157,7 @@ $storico = $stmt_storico->fetchAll();
                     <td><?php echo htmlspecialchars($doc['descrizione']); ?></td>
                     <td><?php echo $doc['data_scadenza'] ? date('d/m/Y', strtotime($doc['data_scadenza'])) : '-'; ?></td>
                     <td><?php echo date('d/m/Y', strtotime($doc['created_at'])); ?></td>
-                    <td><a href="#" class="btn btn-sm btn-danger"><i class="bi bi-trash"></i></a></td>
+                    <td><a href="#" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></a></td>
                 </tr>
             <?php endforeach; ?>
             </tbody></table>

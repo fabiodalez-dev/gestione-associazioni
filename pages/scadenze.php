@@ -1,50 +1,43 @@
 <?php
-// pages/scadenze.php
-include 'config.php';
+// pages/scadenze.php - v2.0 (SaaS)
 
-// Create scadenze table if not exists
-try {
-    $pdo->exec("CREATE TABLE IF NOT EXISTS scadenze (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        titolo VARCHAR(255) NOT NULL,
-        descrizione TEXT,
-        data_scadenza DATE NOT NULL,
-        tipo_scadenza ENUM('Quote', 'Documenti', 'Eventi', 'Generale') NOT NULL,
-        priorita ENUM('Bassa', 'Media', 'Alta', 'Critica') DEFAULT 'Media',
-        stato ENUM('Attiva', 'Completata', 'Annullata') DEFAULT 'Attiva',
-        assegnato_a INT,
-        promemoria_giorni INT DEFAULT 7,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    )");
-} catch (PDOException $e) {
-    // Table might already exist
+if (!isUserLoggedIn() || !isset($_SESSION['associazione_id'])) {
+    redirect('auth/login.php');
 }
+
+$associazione_id = $_SESSION['associazione_id'];
+$message = '';
+$messageType = '';
 
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (isset($_POST['delete_id'])) {
+    if (!validateCSRFToken($_POST['csrf_token'] ?? '')) {
+        $message = "Errore di sicurezza: token CSRF non valido.";
+        $messageType = "danger";
+    } elseif (isset($_POST['delete_id'])) {
         // Delete scadenza
         $deleteId = $_POST['delete_id'];
         try {
-            $stmt = $pdo->prepare("DELETE FROM scadenze WHERE id = ?");
-            $stmt->execute([$deleteId]);
+            $stmt = $pdo->prepare("DELETE FROM scadenze WHERE id = ? AND associazione_id = ?");
+            $stmt->execute([$deleteId, $associazione_id]);
             $message = "Scadenza eliminata con successo!";
             $messageType = "success";
         } catch (PDOException $e) {
-            $message = "Errore durante l'eliminazione: " . $e->getMessage();
+            error_log('scadenze.php: ' . $e->getMessage());
+            $message = "Errore. Riprova più tardi.";
             $messageType = "error";
         }
     } elseif (isset($_POST['complete_id'])) {
         // Complete scadenza
         $completeId = $_POST['complete_id'];
         try {
-            $stmt = $pdo->prepare("UPDATE scadenze SET stato = 'Completata', updated_at = NOW() WHERE id = ?");
-            $stmt->execute([$completeId]);
+            $stmt = $pdo->prepare("UPDATE scadenze SET stato = 'Completata', updated_at = NOW() WHERE id = ? AND associazione_id = ?");
+            $stmt->execute([$completeId, $associazione_id]);
             $message = "Scadenza marcata come completata!";
             $messageType = "success";
         } catch (PDOException $e) {
-            $message = "Errore durante l'aggiornamento: " . $e->getMessage();
+            error_log('scadenze.php: ' . $e->getMessage());
+            $message = "Errore. Riprova più tardi.";
             $messageType = "error";
         }
     } else {
@@ -58,22 +51,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stato = $_POST['stato'];
         $assegnato_a = $_POST['assegnato_a'] ?: null;
         $promemoria_giorni = $_POST['promemoria_giorni'];
-        
+
         try {
             if ($id) {
                 // Update existing scadenza
-                $stmt = $pdo->prepare("UPDATE scadenze SET titolo = ?, descrizione = ?, data_scadenza = ?, tipo_scadenza = ?, priorita = ?, stato = ?, assegnato_a = ?, promemoria_giorni = ?, updated_at = NOW() WHERE id = ?");
-                $stmt->execute([$titolo, $descrizione, $data_scadenza, $tipo_scadenza, $priorita, $stato, $assegnato_a, $promemoria_giorni, $id]);
+                $stmt = $pdo->prepare("UPDATE scadenze SET titolo = ?, descrizione = ?, data_scadenza = ?, tipo_scadenza = ?, priorita = ?, stato = ?, assegnato_a = ?, promemoria_giorni = ?, updated_at = NOW() WHERE id = ? AND associazione_id = ?");
+                $stmt->execute([$titolo, $descrizione, $data_scadenza, $tipo_scadenza, $priorita, $stato, $assegnato_a, $promemoria_giorni, $id, $associazione_id]);
                 $message = "Scadenza aggiornata con successo!";
             } else {
                 // Insert new scadenza
-                $stmt = $pdo->prepare("INSERT INTO scadenze (titolo, descrizione, data_scadenza, tipo_scadenza, priorita, stato, assegnato_a, promemoria_giorni, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())");
-                $stmt->execute([$titolo, $descrizione, $data_scadenza, $tipo_scadenza, $priorita, $stato, $assegnato_a, $promemoria_giorni]);
+                $new_id = generateUuid();
+                $stmt = $pdo->prepare("INSERT INTO scadenze (id, associazione_id, titolo, descrizione, data_scadenza, tipo_scadenza, priorita, stato, assegnato_a, promemoria_giorni, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())");
+                $stmt->execute([$new_id, $associazione_id, $titolo, $descrizione, $data_scadenza, $tipo_scadenza, $priorita, $stato, $assegnato_a, $promemoria_giorni]);
                 $message = "Scadenza aggiunta con successo!";
             }
             $messageType = "success";
         } catch (PDOException $e) {
-            $message = "Errore durante il salvataggio: " . $e->getMessage();
+            error_log('scadenze.php: ' . $e->getMessage());
+            $message = "Errore. Riprova più tardi.";
             $messageType = "error";
         }
     }
@@ -85,68 +80,71 @@ try {
     $statusFilter = $_GET['status'] ?? 'all';
     $typeFilter = $_GET['type'] ?? 'all';
     $priorityFilter = $_GET['priority'] ?? 'all';
-    
-    $sql = "SELECT s.*, u.username as assegnato_username 
-            FROM scadenze s 
-            LEFT JOIN users u ON s.assegnato_a = u.id 
-            WHERE 1=1";
-    $params = [];
-    
+
+    $sql = "SELECT s.*, CONCAT(u.nome, ' ', u.cognome) as assegnato_username
+            FROM scadenze s
+            LEFT JOIN utenti u ON s.assegnato_a = u.id
+            WHERE s.associazione_id = ?";
+    $params = [$associazione_id];
+
     if ($searchTerm) {
         $sql .= " AND (s.titolo LIKE ? OR s.descrizione LIKE ?)";
         $params = array_merge($params, ["%$searchTerm%", "%$searchTerm%"]);
     }
-    
+
     if ($statusFilter !== 'all') {
         $sql .= " AND s.stato = ?";
         $params[] = $statusFilter;
     }
-    
+
     if ($typeFilter !== 'all') {
         $sql .= " AND s.tipo_scadenza = ?";
         $params[] = $typeFilter;
     }
-    
+
     if ($priorityFilter !== 'all') {
         $sql .= " AND s.priorita = ?";
         $params[] = $priorityFilter;
     }
-    
-    $sql .= " ORDER BY 
-                CASE s.stato 
-                    WHEN 'Attiva' THEN 1 
-                    WHEN 'Annullata' THEN 2 
-                    WHEN 'Completata' THEN 3 
+
+    $sql .= " ORDER BY
+                CASE s.stato
+                    WHEN 'Attiva' THEN 1
+                    WHEN 'Annullata' THEN 2
+                    WHEN 'Completata' THEN 3
                 END,
-                CASE s.priorita 
-                    WHEN 'Critica' THEN 1 
-                    WHEN 'Alta' THEN 2 
-                    WHEN 'Media' THEN 3 
-                    WHEN 'Bassa' THEN 4 
+                CASE s.priorita
+                    WHEN 'Critica' THEN 1
+                    WHEN 'Alta' THEN 2
+                    WHEN 'Media' THEN 3
+                    WHEN 'Bassa' THEN 4
                 END,
                 s.data_scadenza ASC";
-    
+
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
     $scadenze = $stmt->fetchAll();
-    
+
     // Get users for assignment dropdown
-    $stmt = $pdo->query("SELECT id, username, email FROM users ORDER BY username");
+    $stmt = $pdo->prepare("SELECT id, CONCAT(nome, ' ', cognome) as username, email FROM utenti WHERE associazione_id = ? ORDER BY nome");
+    $stmt->execute([$associazione_id]);
     $users = $stmt->fetchAll();
-    
+
 } catch (PDOException $e) {
-    die("Error fetching scadenze: " . $e->getMessage());
+    error_log('scadenze.php fetch: ' . $e->getMessage());
+    die("Errore nel recupero dati. Riprova più tardi.");
 }
 
 // Get scadenza for editing
 $editingScadenza = null;
 if (isset($_GET['edit'])) {
     try {
-        $stmt = $pdo->prepare("SELECT * FROM scadenze WHERE id = ?");
-        $stmt->execute([$_GET['edit']]);
+        $stmt = $pdo->prepare("SELECT * FROM scadenze WHERE id = ? AND associazione_id = ?");
+        $stmt->execute([$_GET['edit'], $associazione_id]);
         $editingScadenza = $stmt->fetch();
     } catch (PDOException $e) {
-        $message = "Errore durante il caricamento della scadenza: " . $e->getMessage();
+        error_log('scadenze.php fetch: ' . $e->getMessage());
+        $message = "Errore nel recupero dati. Riprova più tardi.";
         $messageType = "error";
     }
 }
@@ -157,9 +155,9 @@ if (isset($_GET['edit'])) {
     <p class="text-muted">Monitora scadenze, promemoria e attività in sospeso</p>
 </div>
 
-<?php if (isset($message)): ?>
+<?php if ($message): ?>
     <div class="alert alert-<?php echo $messageType === 'success' ? 'success' : 'danger'; ?> alert-dismissible fade show" role="alert">
-        <?php echo $message; ?>
+        <?php echo htmlspecialchars($message); ?>
         <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
     </div>
 <?php endif; ?>
@@ -216,7 +214,7 @@ if (isset($_GET['edit'])) {
             <input type="hidden" name="page" value="scadenze">
             <div class="input-group">
                 <input type="text" class="form-control" placeholder="Cerca..." name="search" value="<?php echo htmlspecialchars($searchTerm); ?>">
-                <button class="btn btn-outline-secondary" type="submit">Cerca</button>
+                <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i></button>
             </div>
         </form>
     </div>
@@ -345,6 +343,7 @@ if (isset($_GET['edit'])) {
                             <td class="text-end">
                                 <?php if ($scadenza['stato'] === 'Attiva'): ?>
                                     <form method="POST" class="d-inline">
+                                        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                                         <input type="hidden" name="complete_id" value="<?php echo $scadenza['id']; ?>">
                                         <button type="submit" class="btn btn-sm btn-outline-success" onclick="return confirm('Marcare come completata?')">
                                             <i class="bi bi-check"></i> Completa
@@ -355,6 +354,7 @@ if (isset($_GET['edit'])) {
                                     <i class="bi bi-pencil"></i> Modifica
                                 </a>
                                 <form method="POST" class="d-inline" onsubmit="return confirm('Sei sicuro di voler eliminare questa scadenza?')">
+                                    <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                                     <input type="hidden" name="delete_id" value="<?php echo $scadenza['id']; ?>">
                                     <button type="submit" class="btn btn-sm btn-outline-danger">
                                         <i class="bi bi-trash"></i> Elimina
@@ -379,18 +379,19 @@ if (isset($_GET['edit'])) {
             </div>
             <form method="POST">
                 <div class="modal-body">
+                    <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                     <input type="hidden" name="id" value="<?php echo $editingScadenza['id'] ?? ''; ?>">
-                    
+
                     <div class="mb-3">
                         <label class="form-label">Titolo</label>
                         <input type="text" class="form-control" name="titolo" value="<?php echo htmlspecialchars($editingScadenza['titolo'] ?? ''); ?>" required>
                     </div>
-                    
+
                     <div class="mb-3">
                         <label class="form-label">Descrizione</label>
                         <textarea class="form-control" name="descrizione" rows="3"><?php echo htmlspecialchars($editingScadenza['descrizione'] ?? ''); ?></textarea>
                     </div>
-                    
+
                     <div class="row">
                         <div class="col-md-6 mb-3">
                             <label class="form-label">Data Scadenza</label>
@@ -401,7 +402,7 @@ if (isset($_GET['edit'])) {
                             <input type="number" class="form-control" name="promemoria_giorni" value="<?php echo htmlspecialchars($editingScadenza['promemoria_giorni'] ?? '7'); ?>" min="1">
                         </div>
                     </div>
-                    
+
                     <div class="row">
                         <div class="col-md-6 mb-3">
                             <label class="form-label">Tipo</label>
@@ -423,7 +424,7 @@ if (isset($_GET['edit'])) {
                             </select>
                         </div>
                     </div>
-                    
+
                     <div class="row">
                         <div class="col-md-6 mb-3">
                             <label class="form-label">Assegna a</label>
@@ -448,7 +449,7 @@ if (isset($_GET['edit'])) {
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button>
-                    <button type="submit" class="btn btn-primary"><?php echo $editingScadenza ? 'Aggiorna' : 'Salva'; ?></button>
+                    <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg me-1"></i><?php echo $editingScadenza ? 'Aggiorna' : 'Salva'; ?></button>
                 </div>
             </form>
         </div>

@@ -52,7 +52,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $messageType = "success";
                 }
             } catch (Exception $e) {
-                $message = "Errore durante l'aggiunta: " . $e->getMessage();
+                error_log('amministratori.php add error: ' . $e->getMessage());
+                $message = "Errore durante l'aggiunta. Riprova più tardi.";
                 $messageType = "error";
             }
         }
@@ -86,7 +87,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $message = "Amministratore aggiornato con successo!"; $messageType = "success";
                 }
             } catch (Exception $e) {
-                $message = "Errore durante l'aggiornamento: " . $e->getMessage(); $messageType = "error";
+                error_log('amministratori.php update error: ' . $e->getMessage());
+                $message = "Errore durante l'aggiornamento. Riprova più tardi."; $messageType = "error";
             }
         }
     }
@@ -143,7 +145,8 @@ try {
     ");
     $administrators = $stmt->fetchAll();
 } catch (PDOException $e) {
-    die("Error fetching administrators: " . $e->getMessage());
+    error_log('amministratori.php fetch error: ' . $e->getMessage());
+    die("Errore nel caricamento degli amministratori. Riprova più tardi.");
 }
 
 // Editing user (open modal)
@@ -170,7 +173,7 @@ try {
 
 <?php if (isset($message)): ?>
     <div class="alert alert-<?php echo $messageType === 'success' ? 'success' : 'danger'; ?> alert-dismissible fade show" role="alert">
-        <?php echo $message; ?>
+        <?php echo htmlspecialchars($message); ?>
         <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
     </div>
 <?php endif; ?>
@@ -288,7 +291,7 @@ try {
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button>
-                    <button type="submit" class="btn btn-primary"><?php echo $editingUser ? 'Salva' : 'Aggiungi'; ?></button>
+                    <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg me-1"></i><?php echo $editingUser ? 'Salva' : 'Aggiungi'; ?></button>
                 </div>
             </form>
         </div>
@@ -300,9 +303,11 @@ document.addEventListener('DOMContentLoaded', function() {
     const roleSelect = document.getElementById('roleSelect');
     const associazioneDiv = document.getElementById('associazioneDiv');
     const associazioneSelect = document.getElementById('associazioneSelect');
-    
+
+    if (!roleSelect || !associazioneDiv || !associazioneSelect) return;
+
     function syncRole(){
-        if (this.value === 'admin_associazione') {
+        if (roleSelect.value === 'admin_associazione') {
             associazioneDiv.style.display = 'block';
             associazioneSelect.required = true;
         } else {
@@ -313,7 +318,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     roleSelect.addEventListener('change', syncRole);
     // Prefill on edit
-    if (roleSelect.value) { syncRole.call(roleSelect); }
+    syncRole();
     <?php if ($editingUser): ?>
     // Mostra subito la modale in modalità modifica
     new bootstrap.Modal(document.getElementById('adminModal')).show();

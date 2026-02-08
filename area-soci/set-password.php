@@ -4,6 +4,7 @@ require_once '../config.php';
 $token = $_GET['token'] ?? '';
 $error = '';
 $success = '';
+$socio = null;
 
 if (empty($token)) {
     $error = "Token non valido o mancante.";
@@ -16,7 +17,7 @@ if (empty($token)) {
     }
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$error) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$error && $socio) {
     $password = $_POST['password'];
     $password_confirm = $_POST['password_confirm'];
 
@@ -35,8 +36,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$error) {
     <div class="card shadow" style="width: 450px;">
         <div class="card-body p-5">
             <h3 class="card-title text-center mb-4">Imposta la tua Password</h3>
-            <?php if($error): ?><div class="alert alert-danger"><?php echo $error; ?></div><?php endif; ?>
-            <?php if($success): ?><div class="alert alert-success"><?php echo $success; ?></div><a href='login.php' class='btn btn-primary w-100'>Vai al Login</a><?php else: ?>
+            <?php if($error): ?><div class="alert alert-danger"><?php echo htmlspecialchars($error); ?></div><?php endif; ?>
+            <?php if($success): ?><div class="alert alert-success"><?php echo htmlspecialchars($success); ?></div><a href='login.php' class='btn btn-primary w-100'>Vai al Login</a><?php else: ?>
                 <?php if(!$error): ?>
                 <form method="POST">
                     <div class="mb-3"><label>Nuova Password</label><input type="password" name="password" class="form-control" required></div>

@@ -684,14 +684,20 @@ $rows = $pdo->query("SELECT a.*,
                     const hid = document.getElementById('link_admin_user_id');
                     let timer;
                     function render(items){
-                        if (!items || items.length===0){ box.style.display='none'; box.innerHTML=''; return; }
+                        if (!items || items.length===0){ box.style.display='none'; box.textContent=''; return; }
                         const filtered = items.filter(u => u.role === 'admin_associazione' && (u.associazione_id === null || u.associazione_id === ''));
-                        if (filtered.length === 0){ box.style.display='none'; box.innerHTML=''; return; }
-                        box.innerHTML = filtered.map(u=>`<div class="p-2 list-group-item list-group-item-action" data-id="${u.id}" style="cursor:pointer">${u.username} &lt;${u.email}&gt; — ${u.role}</div>`).join('');
-                        box.style.display='block';
-                        box.querySelectorAll('[data-id]').forEach(el=>{
-                            el.addEventListener('click', ()=>{ hid.value = el.getAttribute('data-id'); inp.value = el.textContent.trim(); box.style.display='none'; });
+                        if (filtered.length === 0){ box.style.display='none'; box.textContent=''; return; }
+                        box.textContent = '';
+                        filtered.forEach(u => {
+                            var el = document.createElement('div');
+                            el.className = 'p-2 list-group-item list-group-item-action';
+                            el.setAttribute('data-id', u.id);
+                            el.style.cursor = 'pointer';
+                            el.textContent = u.username + ' <' + u.email + '> \u2014 ' + u.role;
+                            el.addEventListener('click', function(){ hid.value = el.getAttribute('data-id'); inp.value = el.textContent.trim(); box.style.display='none'; });
+                            box.appendChild(el);
                         });
+                        box.style.display='block';
                     }
                     if (inp) {
                         inp.addEventListener('input', ()=>{
@@ -711,7 +717,7 @@ $rows = $pdo->query("SELECT a.*,
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button>
-          <button type="submit" class="btn btn-primary">Salva</button>
+          <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg me-1"></i>Salva</button>
         </div>
       </form>
     </div>
@@ -726,8 +732,8 @@ document.addEventListener('DOMContentLoaded', function(){
   const newBox = document.getElementById('adminNewFields');
   const linkBox = document.getElementById('adminLinkFields');
   function sync() {
-    newBox.style.display = createChk && createChk.checked ? '' : 'none';
-    linkBox.style.display = linkChk && linkChk.checked ? '' : 'none';
+    if (newBox) newBox.style.display = createChk && createChk.checked ? '' : 'none';
+    if (linkBox) linkBox.style.display = linkChk && linkChk.checked ? '' : 'none';
   }
   if (createChk) createChk.addEventListener('change', function(){ if (this.checked && linkChk){ linkChk.checked = false; } sync(); });
   if (linkChk) linkChk.addEventListener('change', function(){ if (this.checked && createChk){ createChk.checked = false; } sync(); });
@@ -740,15 +746,21 @@ document.addEventListener('DOMContentLoaded', function(){
   if (inp && box && hid) {
     let timer;
     function render(items){
-      if (!items || items.length===0){ box.style.display='none'; box.innerHTML=''; return; }
+      if (!items || items.length===0){ box.style.display='none'; box.textContent=''; return; }
       // filter out super_admin and those already linked
       const filtered = items.filter(u => u.role !== 'super_admin' && (u.associazione_id === null || u.associazione_id === '' ));
-      if (filtered.length === 0){ box.style.display='none'; box.innerHTML=''; return; }
-      box.innerHTML = filtered.map(u=>`<div class="p-2 list-group-item list-group-item-action" data-id="${u.id}" style="cursor:pointer">${u.username} &lt;${u.email}&gt; — ${u.role}</div>`).join('');
-      box.style.display='block';
-      box.querySelectorAll('[data-id]').forEach(el=>{
-        el.addEventListener('click', ()=>{ hid.value = el.getAttribute('data-id'); inp.value = el.textContent.trim(); box.style.display='none'; });
+      if (filtered.length === 0){ box.style.display='none'; box.textContent=''; return; }
+      box.textContent = '';
+      filtered.forEach(function(u){
+        var el = document.createElement('div');
+        el.className = 'p-2 list-group-item list-group-item-action';
+        el.setAttribute('data-id', u.id);
+        el.style.cursor = 'pointer';
+        el.textContent = u.username + ' <' + u.email + '> \u2014 ' + u.role;
+        el.addEventListener('click', function(){ hid.value = el.getAttribute('data-id'); inp.value = el.textContent.trim(); box.style.display='none'; });
+        box.appendChild(el);
       });
+      box.style.display='block';
     }
     inp.addEventListener('input', ()=>{
       clearTimeout(timer);

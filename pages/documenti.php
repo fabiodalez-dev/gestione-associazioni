@@ -68,7 +68,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['document_file'])) {
                 $message = "Documento caricato con successo!";
                 $messageType = "success";
             } catch (PDOException $e) {
-                $message = "Errore durante il salvataggio: " . $e->getMessage();
+                error_log('documenti.php upload PDOException: ' . $e->getMessage());
+                $message = "Errore durante il salvataggio. Riprova più tardi.";
                 $messageType = "error";
                 
                 // Delete uploaded file if database save fails
@@ -114,7 +115,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_id'])) {
             $messageType = "error";
         }
     } catch (PDOException $e) {
-        $message = "Errore durante l'eliminazione: " . $e->getMessage();
+        error_log('documenti.php delete PDOException: ' . $e->getMessage());
+        $message = "Errore durante l'eliminazione. Riprova più tardi.";
         $messageType = "error";
     }
     }
@@ -150,7 +152,8 @@ try {
     $stmt->execute([$associazione_id]);
     $categories = $stmt->fetchAll(PDO::FETCH_COLUMN);
 } catch (PDOException $e) {
-    die("Error fetching documents: " . $e->getMessage());
+    error_log('documenti.php fetch PDOException: ' . $e->getMessage());
+    die("Errore nel recupero dei documenti. Riprova più tardi.");
 }
 
 ?>
@@ -162,7 +165,7 @@ try {
 
 <?php if (isset($message)): ?>
     <div class="alert alert-<?php echo $messageType === 'success' ? 'success' : 'danger'; ?> alert-dismissible fade show" role="alert">
-        <?php echo $message; ?>
+        <?php echo htmlspecialchars($message); ?>
         <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
     </div>
 <?php endif; ?>
@@ -204,7 +207,7 @@ try {
             <input type="hidden" name="page" value="documenti">
             <div class="input-group">
                 <input type="text" class="form-control" placeholder="Cerca per nome file o descrizione..." name="search" value="<?php echo htmlspecialchars($searchTerm); ?>">
-                <button class="btn btn-outline-secondary" type="submit">Cerca</button>
+                <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i></button>
             </div>
         </form>
     </div>
@@ -276,14 +279,16 @@ document.addEventListener('DOMContentLoaded', function() {
     const fileInput = document.getElementById('document_file');
     const fileNamePreview = document.getElementById('file_name_preview');
     const selectedFileName = document.getElementById('selected_file_name');
-    
-    fileInput.addEventListener('change', function() {
-        if (this.files && this.files[0]) {
-            selectedFileName.textContent = this.files[0].name;
-            fileNamePreview.style.display = 'block';
-        } else {
-            fileNamePreview.style.display = 'none';
-        }
-    });
+
+    if (fileInput && fileNamePreview && selectedFileName) {
+        fileInput.addEventListener('change', function() {
+            if (this.files && this.files[0]) {
+                selectedFileName.textContent = this.files[0].name;
+                fileNamePreview.style.display = 'block';
+            } else {
+                fileNamePreview.style.display = 'none';
+            }
+        });
+    }
 });
 </script>
