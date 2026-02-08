@@ -40,6 +40,11 @@ $allowed_pages = [
     'stampa-tessera' => 'pages/stampa-tessera.php',
     'genera-tessera-pdf' => 'pages/genera-tessera-pdf.php',
     'associazioni' => 'pages/associazioni.php',
+    // Pagine Email & Notifiche
+    'email-impostazioni' => 'pages/email_impostazioni.php',
+    'email-templates' => 'pages/email_templates.php',
+    'email-coda' => 'pages/email_coda.php',
+    'email-log' => 'pages/email_log.php',
     // Pagine API e azioni
     'export' => 'api/export.php',
 ];

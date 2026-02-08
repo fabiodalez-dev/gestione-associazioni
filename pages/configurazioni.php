@@ -19,13 +19,13 @@ $has_tessera_templates = tableExists($pdo, 'tessera_templates');
 
 // Gestione Azioni POST
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    try {
-        // CRUD Sedi (sezione impostazioni)
-        if (isset($_POST['sedi_action']) && $associazione_id) {
-            if (!validateCSRFToken($_POST['csrf_token'] ?? '')) {
-                $message = "Errore di sicurezza: token CSRF non valido.";
-                $messageType = "danger";
-            } else {
+    if (!validateCSRFToken($_POST['csrf_token'] ?? '')) {
+        $message = "Errore di sicurezza: token CSRF non valido.";
+        $messageType = "danger";
+    } else {
+        try {
+            // CRUD Sedi (sezione impostazioni)
+            if (isset($_POST['sedi_action']) && $associazione_id) {
                 if ($_POST['sedi_action'] === 'delete' && !empty($_POST['delete_id'])) {
                     $stmt = $pdo->prepare("DELETE FROM sedi WHERE id = ? AND associazione_id = ?");
                     $stmt->execute([$_POST['delete_id'], $associazione_id]);
@@ -49,9 +49,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 }
             }
-        }
-        // Upload Logo Associazione
-        if (isset($_POST['upload_logo']) && isset($_FILES['logo_file'])) {
+            // Upload Logo Associazione
+            if (isset($_POST['upload_logo']) && isset($_FILES['logo_file'])) {
             $errors = validateFileUpload($_FILES['logo_file'], ['jpg', 'jpeg', 'png'], 2 * 1024 * 1024);
             if (empty($errors)) {
                 $safeName = generateSecureFileName($_FILES['logo_file']['name'], 'logo_');
@@ -131,10 +130,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $messageType = "success";
             }
         }
-    } catch (PDOException $e) {
-        error_log('configurazioni.php PDOException: ' . $e->getMessage());
-        $message = "Errore durante l'aggiornamento. Riprova più tardi.";
-        $messageType = "danger";
+        } catch (PDOException $e) {
+            error_log('configurazioni.php PDOException: ' . $e->getMessage());
+            $message = "Errore durante l'aggiornamento. Riprova più tardi.";
+            $messageType = "danger";
+        }
     }
 }
 
@@ -223,6 +223,7 @@ if ($has_tessera_templates) {
             <div class="card-header"><h5 class="mb-0">Dati Anagrafici</h5></div>
             <div class="card-body">
                 <form method="POST">
+                    <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                     <div class="mb-3"><label>Nome Associazione</label><input type="text" name="nome" class="form-control" value="<?php echo htmlspecialchars($associazione['nome'] ?? ''); ?>"></div>
                     <div class="row">
                         <div class="col-md-6 mb-3"><label>Partita IVA</label><input type="text" name="partita_iva" class="form-control" value="<?php echo htmlspecialchars($associazione['partita_iva'] ?? ''); ?>"></div>
@@ -248,6 +249,7 @@ if ($has_tessera_templates) {
             <div class="card-header"><h5 class="mb-0">Impostazioni Tesseramento e Quote</h5></div>
             <div class="card-body">
                 <form method="POST">
+                    <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                     <div class="mb-3">
                         <label>Tipo Scadenza Predefinita</label>
                         <select name="tipo_scadenza_default" class="form-select">
@@ -270,6 +272,7 @@ if ($has_tessera_templates) {
             <div class="card-header"><h5 class="mb-0">Template Email Scadenza</h5></div>
             <div class="card-body">
                 <form method="POST">
+                    <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                     <div class="form-text mb-2">Placeholder disponibili: {NOME_SOCIO}, {COGNOME_SOCIO}, {DATA_SCADENZA}, {IMPORTO_QUOTA}</div>
                     <textarea name="template_email_scadenza" class="form-control" rows="10"><?php echo htmlspecialchars($associazione['template_email_scadenza'] ?? 'Ciao {NOME_SOCIO}, ti ricordiamo che la tua quota scade il {DATA_SCADENZA}.'); ?></textarea>
                     <button type="submit" name="update_template" class="btn btn-primary mt-3"><i class="bi bi-floppy me-1"></i>Salva Template</button>
@@ -304,6 +307,7 @@ if ($has_tessera_templates) {
                 </form>
 
                 <form method="POST">
+                    <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                     <input type="hidden" name="save_tessera_template" value="1">
                     <input type="hidden" name="tipo_id" value="<?php echo htmlspecialchars($selected_tipo_id); ?>">
                     <div class="form-text mb-2">Placeholder disponibili: {ASSOCIAZIONE_NOME}, {ASSOCIAZIONE_CODICE_FISCALE}, {ASSOCIAZIONE_INDIRIZZO}, {NOME}, {COGNOME}, {NOME_COMPLETO}, {NUMERO_SOCIO}, {TIPO_SOCIO}, {CATEGORIA_SOCIO}, {NUMERO_TESSERA}, {ANNO_VALIDITA}, {DATA_EMISSIONE}, {DATA_SCADENZA}</div>
@@ -323,6 +327,7 @@ if ($has_tessera_templates) {
                     <div class="mb-2"><img src="<?php echo htmlspecialchars($associazione['logo_url']); ?>" alt="Logo" style="max-width: 100%; height: auto; border:1px solid #ddd; padding:6px; border-radius:6px;"></div>
                 <?php endif; ?>
                 <form method="POST" enctype="multipart/form-data">
+                    <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                     <div class="mb-3">
                         <label class="form-label">Carica nuovo logo (PNG/JPG, max 2MB)</label>
                         <input type="file" name="logo_file" class="form-control" accept="image/png,image/jpeg">

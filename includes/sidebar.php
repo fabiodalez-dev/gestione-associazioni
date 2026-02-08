@@ -8,7 +8,11 @@
 
         <?php if (($_SESSION['user_role'] ?? '') === 'super_admin'): ?>
         <?php
-        $sidebar_assoc_list = $pdo->query("SELECT id, nome FROM associazioni WHERE attiva = 1 ORDER BY nome")->fetchAll();
+        try {
+            $sidebar_assoc_list = $pdo->query("SELECT id, nome FROM associazioni WHERE attiva = 1 ORDER BY nome")->fetchAll();
+        } catch (PDOException $e) {
+            $sidebar_assoc_list = [];
+        }
         $sidebar_current_id = $_SESSION['associazione_id'] ?? null;
         $sidebar_current_nome = $_SESSION['associazione_nome'] ?? '';
         ?>
@@ -17,7 +21,7 @@
             <select class="sidebar-assoc-select" onchange="if(this.value){window.location='index.php?page=dashboard&assoc_id='+this.value}else{window.location='index.php?page=dashboard&switch_assoc=1'}">
                 <option value="">-- Seleziona --</option>
                 <?php foreach ($sidebar_assoc_list as $sa): ?>
-                    <option value="<?php echo htmlspecialchars($sa['id']); ?>" <?php echo ($sidebar_current_id === $sa['id']) ? 'selected' : ''; ?>><?php echo htmlspecialchars($sa['nome']); ?></option>
+                    <option value="<?php echo htmlspecialchars($sa['id']); ?>" <?php echo ((string)$sidebar_current_id === (string)$sa['id']) ? 'selected' : ''; ?>><?php echo htmlspecialchars($sa['nome']); ?></option>
                 <?php endforeach; ?>
             </select>
         </div>
@@ -59,11 +63,21 @@
                     Eventi
                 </a>
             </li>
+            <?php $emailPages = ['comunicazioni','email-templates','email-coda','email-log','email-impostazioni']; $emailActive = isset($_GET['page']) && in_array($_GET['page'], $emailPages, true); ?>
             <li class="nav-item">
-                <a class="nav-link <?php echo (isset($_GET['page']) && $_GET['page'] == 'comunicazioni') ? 'active' : ''; ?>" href="index.php?page=comunicazioni">
-                    <i class="bi bi-envelope me-2"></i>
-                    Comunicazioni
+                <a class="nav-link d-flex justify-content-between align-items-center <?php echo $emailActive ? '' : 'collapsed'; ?>" data-bs-toggle="collapse" href="#emailSubmenu" role="button" aria-expanded="<?php echo $emailActive ? 'true' : 'false'; ?>">
+                    <span><i class="bi bi-envelope me-2"></i>Email &amp; Notifiche</span>
+                    <i class="bi bi-chevron-down small"></i>
                 </a>
+                <div class="collapse <?php echo $emailActive ? 'show' : ''; ?>" id="emailSubmenu">
+                    <ul class="nav flex-column ms-3">
+                        <li class="nav-item"><a class="nav-link py-1 <?php echo (($_GET['page'] ?? '') === 'comunicazioni') ? 'active' : ''; ?>" href="index.php?page=comunicazioni"><i class="bi bi-send me-2"></i>Invia Comunicazione</a></li>
+                        <li class="nav-item"><a class="nav-link py-1 <?php echo (($_GET['page'] ?? '') === 'email-templates') ? 'active' : ''; ?>" href="index.php?page=email-templates"><i class="bi bi-palette me-2"></i>Template Email</a></li>
+                        <li class="nav-item"><a class="nav-link py-1 <?php echo (($_GET['page'] ?? '') === 'email-coda') ? 'active' : ''; ?>" href="index.php?page=email-coda"><i class="bi bi-hourglass-split me-2"></i>Coda Invio</a></li>
+                        <li class="nav-item"><a class="nav-link py-1 <?php echo (($_GET['page'] ?? '') === 'email-log') ? 'active' : ''; ?>" href="index.php?page=email-log"><i class="bi bi-clock-history me-2"></i>Storico Email</a></li>
+                        <li class="nav-item"><a class="nav-link py-1 <?php echo (($_GET['page'] ?? '') === 'email-impostazioni') ? 'active' : ''; ?>" href="index.php?page=email-impostazioni"><i class="bi bi-gear me-2"></i>Impostazioni SMTP</a></li>
+                    </ul>
+                </div>
             </li>
             <li class="nav-item">
                 <a class="nav-link <?php echo (isset($_GET['page']) && $_GET['page'] == 'documenti') ? 'active' : ''; ?>" href="index.php?page=documenti">

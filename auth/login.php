@@ -60,9 +60,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $error = 'Credenziali non valide.';
             }
         } catch (PDOException $e) {
-            // In produzione, loggare l'errore invece di mostrarlo
             $error = 'Errore del sistema di autenticazione. Riprova più tardi.';
-            // error_log($e->getMessage());
+            error_log('login.php PDOException: ' . $e->getMessage());
         }
     }
 }

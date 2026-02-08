@@ -20,7 +20,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['document_file'])) {
     // File upload handling
     $target_dir = "../uploads/documents/";
     if (!file_exists($target_dir)) {
-        mkdir($target_dir, 0777, true);
+        mkdir($target_dir, 0755, true);
     }
     
     $file_name = basename($_FILES["document_file"]["name"]);

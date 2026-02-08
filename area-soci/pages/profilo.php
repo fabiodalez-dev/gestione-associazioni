@@ -11,6 +11,10 @@ $messageType = '';
 
 // Gestione aggiornamento profilo
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!validateCSRFToken($_POST['csrf_token'] ?? '')) {
+        $message = "Errore di sicurezza: token CSRF non valido.";
+        $messageType = "danger";
+    } else {
     $socio_id = $socio_loggato['id'];
     $telefono = sanitizeInput($_POST['telefono']);
     $indirizzo = sanitizeInput($_POST['indirizzo']);
@@ -33,6 +37,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         error_log('profilo.php PDOException: ' . $e->getMessage());
         $message = "Errore durante l'aggiornamento del profilo. Riprova più tardi.";
         $messageType = "danger";
+    }
     }
 }
 
@@ -59,6 +64,7 @@ $tags = $stmt_tags->fetchAll();
     <div class="card-header"><h5>Dati Anagrafici</h5></div>
     <div class="card-body">
         <form method="POST">
+            <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
             <div class="row g-3">
                 <div class="col-md-6"><label class="form-label">Nome</label><input type="text" class="form-control" value="<?php echo htmlspecialchars($socio_loggato['nome']); ?>" disabled></div>
                 <div class="col-md-6"><label class="form-label">Cognome</label><input type="text" class="form-control" value="<?php echo htmlspecialchars($socio_loggato['cognome']); ?>" disabled></div>

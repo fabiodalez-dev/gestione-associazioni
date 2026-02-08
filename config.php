@@ -12,10 +12,15 @@ if (!defined('INSTALLER_ACTIVE') && !headers_sent()) {
     header('Permissions-Policy: geolocation=(), microphone=(), camera=()');
     // Content Security Policy (avoid forcing HTTPS in local HTTP to prevent ERR_CONNECTION_CLOSED)
     $is_https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https');
+    // GrapesJS pages need 'unsafe-eval' for the editor engine
+    $grapesjs_pages = ['email-templates', 'comunicazioni'];
+    $current_page_key = $_GET['page'] ?? '';
+    $needs_eval = in_array($current_page_key, $grapesjs_pages, true);
+    $script_extra = $needs_eval ? " 'unsafe-eval'" : '';
     $csp = "default-src 'self'; "
          . "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com http://cdn.jsdelivr.net http://cdnjs.cloudflare.com; "
          . "style-src-elem 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com http://cdn.jsdelivr.net http://cdnjs.cloudflare.com; "
-         . "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com http://cdn.jsdelivr.net http://cdnjs.cloudflare.com; "
+         . "script-src 'self' 'unsafe-inline'" . $script_extra . " https://cdn.jsdelivr.net https://cdnjs.cloudflare.com http://cdn.jsdelivr.net http://cdnjs.cloudflare.com; "
          . "img-src 'self' data:; "
          . "connect-src 'self'; "
          . "font-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com http://cdn.jsdelivr.net http://cdnjs.cloudflare.com;";
@@ -314,6 +319,53 @@ if (!function_exists('logSocioActivity')) {
     } catch (PDOException $e) {
         error_log("Impossibile registrare l'attività del socio: " . $e->getMessage());
     }
+    }
+}
+
+// --- Encryption Key ---
+if (!defined('APP_ENCRYPTION_KEY')) {
+    define('APP_ENCRYPTION_KEY', $_ENV['APP_ENCRYPTION_KEY'] ?? '');
+}
+
+/**
+ * Encrypt a value using AES-256-CBC.
+ * Returns base64-encoded "iv:ciphertext" string.
+ */
+if (!function_exists('encryptValue')) {
+    function encryptValue(string $plaintext): string {
+        $key = hex2bin(APP_ENCRYPTION_KEY);
+        if ($key === false || strlen($key) !== 32) {
+            throw new RuntimeException('APP_ENCRYPTION_KEY must be a 64-char hex string.');
+        }
+        $iv = random_bytes(16);
+        $cipher = openssl_encrypt($plaintext, 'aes-256-cbc', $key, OPENSSL_RAW_DATA, $iv);
+        if ($cipher === false) {
+            throw new RuntimeException('Encryption failed.');
+        }
+        return base64_encode($iv . $cipher);
+    }
+}
+
+/**
+ * Decrypt a value previously encrypted with encryptValue().
+ */
+if (!function_exists('decryptValue')) {
+    function decryptValue(string $encoded): string {
+        $key = hex2bin(APP_ENCRYPTION_KEY);
+        if ($key === false || strlen($key) !== 32) {
+            throw new RuntimeException('APP_ENCRYPTION_KEY must be a 64-char hex string.');
+        }
+        $data = base64_decode($encoded, true);
+        if ($data === false || strlen($data) < 17) {
+            throw new RuntimeException('Invalid encrypted data.');
+        }
+        $iv = substr($data, 0, 16);
+        $cipher = substr($data, 16);
+        $plain = openssl_decrypt($cipher, 'aes-256-cbc', $key, OPENSSL_RAW_DATA, $iv);
+        if ($plain === false) {
+            throw new RuntimeException('Decryption failed.');
+        }
+        return $plain;
     }
 }
 

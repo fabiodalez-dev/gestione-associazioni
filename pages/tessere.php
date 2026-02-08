@@ -34,33 +34,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     } elseif (isset($_POST['generate_all'])) {
         $currentYear = $_POST['anno_validita'] ?? date('Y');
-        {
-        $stmt = $pdo->prepare("SELECT id FROM soci WHERE stato = 'Attivo' AND associazione_id = ? AND id NOT IN (SELECT socio_id FROM tessere WHERE anno_validita = ? AND associazione_id = ?)");
-        $stmt->execute([$associazione_id, $currentYear, $associazione_id]);
-        $soci_da_tesserare = $stmt->fetchAll(PDO::FETCH_COLUMN);
+        $pdo->beginTransaction();
+        try {
+            $stmt = $pdo->prepare("SELECT id FROM soci WHERE stato = 'Attivo' AND associazione_id = ? AND id NOT IN (SELECT socio_id FROM tessere WHERE anno_validita = ? AND associazione_id = ?)");
+            $stmt->execute([$associazione_id, $currentYear, $associazione_id]);
+            $soci_da_tesserare = $stmt->fetchAll(PDO::FETCH_COLUMN);
 
-        $generated_count = 0;
-        foreach ($soci_da_tesserare as $socio_id) {
-            // Get the next progressive number for this year
-            $count_stmt = $pdo->prepare("SELECT COUNT(*) as cnt FROM tessere WHERE associazione_id = ? AND anno_validita = ?");
-            $count_stmt->execute([$associazione_id, $currentYear]);
-            $count = ((int)$count_stmt->fetch()['cnt']) + $generated_count + 1;
-            $numero_tessera = $currentYear . str_pad((string)$count, 4, '0', STR_PAD_LEFT);
-            
-            $data_emissione = date('Y-m-d');
-            $data_scadenza = ($tipo_scadenza_default === 'solare') ? $currentYear . '-12-31' : date('Y-m-d', strtotime('+1 year'));
+            $generated_count = 0;
+            foreach ($soci_da_tesserare as $socio_id) {
+                $count_stmt = $pdo->prepare("SELECT COUNT(*) as cnt FROM tessere WHERE associazione_id = ? AND anno_validita = ?");
+                $count_stmt->execute([$associazione_id, $currentYear]);
+                $count = ((int)$count_stmt->fetch()['cnt']) + $generated_count + 1;
+                $numero_tessera = $currentYear . str_pad((string)$count, 4, '0', STR_PAD_LEFT);
 
-            $insert_stmt = $pdo->prepare("INSERT INTO tessere (id, associazione_id, socio_id, numero_tessera, anno_validita, data_emissione, data_scadenza, tipo_scadenza) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-            $insert_stmt->execute([generateUuid(), $associazione_id, $socio_id, $numero_tessera, $currentYear, $data_emissione, $data_scadenza, $tipo_scadenza_default]);
-            $generated_count++;
-        }
-        $message = "Generate $generated_count nuove tessere per l'anno $currentYear.";
-        $messageType = "success";
+                $data_emissione = date('Y-m-d');
+                $data_scadenza = ($tipo_scadenza_default === 'solare') ? $currentYear . '-12-31' : date('Y-m-d', strtotime('+1 year'));
+
+                $insert_stmt = $pdo->prepare("INSERT INTO tessere (id, associazione_id, socio_id, numero_tessera, anno_validita, data_emissione, data_scadenza, tipo_scadenza) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+                $insert_stmt->execute([generateUuid(), $associazione_id, $socio_id, $numero_tessera, $currentYear, $data_emissione, $data_scadenza, $tipo_scadenza_default]);
+                $generated_count++;
+            }
+            $pdo->commit();
+            $message = "Generate $generated_count nuove tessere per l'anno $currentYear.";
+            $messageType = "success";
+        } catch (\Exception $e) {
+            $pdo->rollBack();
+            error_log('tessere.php generate_all error: ' . $e->getMessage());
+            $message = "Errore durante la generazione delle tessere.";
+            $messageType = "danger";
         }
 
     } else { // Aggiunta o Modifica
         $id = $_POST['id'] ?? null;
         $socio_id = $_POST['socio_id'];
+        // Verifica che il socio appartenga all'associazione corrente
+        $check_socio = $pdo->prepare("SELECT id FROM soci WHERE id = ? AND associazione_id = ?");
+        $check_socio->execute([$socio_id, $associazione_id]);
+        if (!$check_socio->fetch()) {
+            $message = "Errore: socio non valido per questa associazione.";
+            $messageType = "danger";
+        } else {
         $numero_tessera = cleanInput($_POST['numero_tessera'] ?? '');
         $anno_validita = $_POST['anno_validita'];
         $data_emissione = $_POST['data_emissione'];
@@ -86,8 +99,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt = $pdo->prepare("INSERT INTO tessere (id, associazione_id, socio_id, numero_tessera, anno_validita, data_emissione, data_scadenza, stato, tipo_scadenza) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
             $stmt->execute([$new_id, ($associazione_id), $socio_id, $numero_tessera, $anno_validita, $data_emissione, $data_scadenza, $stato, $tipo_scadenza]);
             $message = "Tessera creata.";
+
+            // Best-effort: queue rinnovo_tessera email
+            try {
+                require_once __DIR__ . '/../includes/EmailService.php';
+                require_once __DIR__ . '/../includes/email_helpers.php';
+                $emailSvc = new EmailService($pdo, $associazione_id);
+                $smtpCfg = $emailSvc->loadSmtpConfig();
+                if ($emailSvc->isConfigured() && $smtpCfg !== null && !empty($smtpCfg['auto_rinnovo_tessera'])) {
+                    $tpl = $emailSvc->getTemplate('rinnovo_tessera');
+                    if ($tpl !== null && !empty($tpl['attivo'])) {
+                        $ph = buildPlaceholderValues($pdo, $associazione_id, $socio_id, [
+                            'NUMERO_TESSERA' => $numero_tessera,
+                            'ANNO_VALIDITA' => $anno_validita,
+                            'DATA_SCADENZA' => $data_scadenza,
+                        ]);
+                        $rendered = $emailSvc->renderTemplate('rinnovo_tessera', $ph);
+                        if ($rendered !== null) {
+                            $socioStmt = $pdo->prepare('SELECT nome, cognome, email FROM soci WHERE id = ? AND associazione_id = ?');
+                            $socioStmt->execute([$socio_id, $associazione_id]);
+                            $socioRow = $socioStmt->fetch();
+                            if ($socioRow && !empty($socioRow['email'])) {
+                                $emailSvc->queueEmail(
+                                    $socioRow['email'],
+                                    $socioRow['nome'] . ' ' . $socioRow['cognome'],
+                                    $rendered['subject'], $rendered['body'],
+                                    $socio_id, generateUuid(), 'rinnovo_tessera', 3
+                                );
+                            }
+                        }
+                    }
+                }
+            } catch (\Throwable $emailErr) {
+                error_log('tessere.php email rinnovo error: ' . $emailErr->getMessage());
+            }
         }
         $messageType = "success";
+        }
     }
 }
 
@@ -646,7 +694,11 @@ $chart_revenue = array_map(fn($r)=> (int)round((float)$r['ricavi']), $agg_rows);
                 <div class="col-md-6 mb-3"><label>Data Emissione</label><input type="date" name="data_emissione" class="form-control" value="<?php echo htmlspecialchars($editingTessera['data_emissione'] ?? date('Y-m-d')); ?>" required></div>
                 <div class="col-md-6 mb-3"><label>Data Scadenza</label><input type="date" name="data_scadenza" class="form-control" value="<?php echo htmlspecialchars($editingTessera['data_scadenza'] ?? date('Y') . '-12-31'); ?>" required></div>
             </div>
-            <div class="mb-3"><label>Stato</label><select name="stato" class="form-select"><option value="Attiva">Attiva</option><option value="Sospesa">Sospesa</option><option value="Annullata">Annullata</option></select></div>
+            <div class="mb-3"><label>Stato</label><select name="stato" class="form-select">
+                <option value="Attiva" <?php echo ($editingTessera['stato'] ?? '') === 'Attiva' ? 'selected' : ''; ?>>Attiva</option>
+                <option value="Sospesa" <?php echo ($editingTessera['stato'] ?? '') === 'Sospesa' ? 'selected' : ''; ?>>Sospesa</option>
+                <option value="Annullata" <?php echo ($editingTessera['stato'] ?? '') === 'Annullata' ? 'selected' : ''; ?>>Annullata</option>
+            </select></div>
         </div>
         <div class="modal-footer">
             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button>

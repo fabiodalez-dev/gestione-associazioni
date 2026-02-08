@@ -118,6 +118,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if ($createDb) {
                         $safeName = preg_replace('/[^a-zA-Z0-9_]/', '', $dbName);
                         $pdo->exec("CREATE DATABASE IF NOT EXISTS `{$safeName}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+                        $dbName = $safeName;
                     }
 
                     // Test connecting to the actual database
@@ -139,7 +140,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     header('Location: install.php?step=3');
                     exit;
                 } catch (PDOException $e) {
-                    $errors[] = 'Errore di connessione al database: ' . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8');
+                    error_log('install.php DB connection error: ' . $e->getMessage());
+                    $errors[] = 'Errore di connessione al database. Verifica le credenziali e riprova.';
                     $step = 2;
                 }
             }
@@ -164,6 +166,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $errors[] = 'File schema non trovato: database/schema.sql';
                         $step = 3;
                     } else {
+                        // Drop existing tables to avoid charset/collation conflicts
+                        $pdo->exec("SET FOREIGN_KEY_CHECKS = 0");
+                        $existingTables = $pdo->query("SHOW TABLES")->fetchAll(PDO::FETCH_COLUMN);
+                        foreach ($existingTables as $table) {
+                            $pdo->exec("DROP TABLE IF EXISTS `{$table}`");
+                        }
+                        $pdo->exec("SET FOREIGN_KEY_CHECKS = 1");
+
                         $sql = file_get_contents($schemaFile);
 
                         // Remove comments
@@ -188,7 +198,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     $executed++;
                                     continue;
                                 }
-                                $tableErrors[] = htmlspecialchars($msg, ENT_QUOTES, 'UTF-8');
+                                $tableErrors[] = $msg;
                             }
                         }
 
@@ -228,7 +238,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         }
                     }
                 } catch (PDOException $e) {
-                    $errors[] = 'Errore database: ' . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8');
+                    error_log('install.php schema execution error: ' . $e->getMessage());
+                    $errors[] = 'Errore durante la creazione delle tabelle. Verifica i permessi del database.';
                     $step = 3;
                 }
             }
@@ -286,7 +297,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         if (strpos($msg, 'Duplicate entry') !== false) {
                             $errors[] = 'Un utente con questa email esiste già.';
                         } else {
-                            $errors[] = 'Errore nella creazione dell\'account: ' . htmlspecialchars($msg, ENT_QUOTES, 'UTF-8');
+                            error_log('install.php admin creation error: ' . $msg);
+                            $errors[] = 'Errore nella creazione dell\'account. Riprova più tardi.';
                         }
                     }
                 }
@@ -325,13 +337,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 }
 
-                // Create lock file
-                file_put_contents(__DIR__ . '/.installed', date('Y-m-d H:i:s'));
-
-                // Clear session install data
-                unset($_SESSION['install_db'], $_SESSION['install_step'], $_SESSION['install_max_step'], $_SESSION['install_csrf']);
-
                 if (empty($errors)) {
+                    // Create lock file only on success
+                    file_put_contents(__DIR__ . '/.installed', date('Y-m-d H:i:s'));
+
+                    // Clear session install data
+                    unset($_SESSION['install_db'], $_SESSION['install_step'], $_SESSION['install_max_step'], $_SESSION['install_csrf']);
                     $_SESSION['install_done'] = true;
                 }
             }
@@ -399,7 +410,7 @@ $pageTitle = 'Installazione - ' . $stepLabels[$step];
         <?php if (!empty($errors)): ?>
             <div class="alert alert-danger">
                 <?php foreach ($errors as $err): ?>
-                    <div><?= $err ?></div>
+                    <div><?= htmlspecialchars($err, ENT_QUOTES, 'UTF-8') ?></div>
                 <?php endforeach; ?>
             </div>
         <?php endif; ?>

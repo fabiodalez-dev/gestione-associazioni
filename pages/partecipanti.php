@@ -232,10 +232,10 @@ try {
     </div>
     <div>
         <div class="btn-group" role="group">
-            <a href="index.php?page=partecipanti&evento_id=<?php echo $evento_id; ?>&status=all" class="btn btn-<?php echo $statusFilter === 'all' ? 'primary' : 'outline-primary'; ?>">Tutti</a>
-            <a href="index.php?page=partecipanti&evento_id=<?php echo $evento_id; ?>&status=Confermato" class="btn btn-<?php echo $statusFilter === 'Confermato' ? 'success' : 'outline-success'; ?>">Confermati</a>
-            <a href="index.php?page=partecipanti&evento_id=<?php echo $evento_id; ?>&status=Forse" class="btn btn-<?php echo $statusFilter === 'Forse' ? 'warning' : 'outline-warning'; ?>">Forse</a>
-            <a href="index.php?page=partecipanti&evento_id=<?php echo $evento_id; ?>&status=Non Partecipa" class="btn btn-<?php echo $statusFilter === 'Non Partecipa' ? 'danger' : 'outline-danger'; ?>">Non Partecipa</a>
+            <a href="index.php?page=partecipanti&evento_id=<?php echo htmlspecialchars($evento_id, ENT_QUOTES); ?>&status=all" class="btn btn-<?php echo $statusFilter === 'all' ? 'primary' : 'outline-primary'; ?>">Tutti</a>
+            <a href="index.php?page=partecipanti&evento_id=<?php echo htmlspecialchars($evento_id, ENT_QUOTES); ?>&status=Confermato" class="btn btn-<?php echo $statusFilter === 'Confermato' ? 'success' : 'outline-success'; ?>">Confermati</a>
+            <a href="index.php?page=partecipanti&evento_id=<?php echo htmlspecialchars($evento_id, ENT_QUOTES); ?>&status=Forse" class="btn btn-<?php echo $statusFilter === 'Forse' ? 'warning' : 'outline-warning'; ?>">Forse</a>
+            <a href="index.php?page=partecipanti&evento_id=<?php echo htmlspecialchars($evento_id, ENT_QUOTES); ?>&status=Non Partecipa" class="btn btn-<?php echo $statusFilter === 'Non Partecipa' ? 'danger' : 'outline-danger'; ?>">Non Partecipa</a>
         </div>
     </div>
 </div>

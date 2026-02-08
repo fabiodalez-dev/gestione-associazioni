@@ -17,28 +17,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $message = "Errore di sicurezza: token CSRF non valido.";
         $messageType = "danger";
     } else {
-        $id = $_POST['id'] ?? null;
-        $nome_gruppo = sanitizeInput($_POST['nome_gruppo']);
-        $descrizione = sanitizeInput($_POST['descrizione']);
+        try {
+            if (isset($_POST['delete_id'])) {
+                $stmt = $pdo->prepare("DELETE FROM gruppi_dinamici WHERE id = ? AND associazione_id = ?");
+                $stmt->execute([$_POST['delete_id'], $associazione_id]);
+                $message = "Gruppo eliminato."; $messageType = "success";
+            } else {
+                $id = $_POST['id'] ?? null;
+                $nome_gruppo = sanitizeInput($_POST['nome_gruppo'] ?? '');
+                $descrizione = sanitizeInput($_POST['descrizione'] ?? '');
 
-        $filtri = [];
-        if (!empty($_POST['filtro_stato'])) $filtri['stato'] = sanitizeInput($_POST['filtro_stato']);
-        if (!empty($_POST['filtro_citta'])) $filtri['citta'] = sanitizeInput($_POST['filtro_citta']);
-        $filtri_json = json_encode($filtri);
+                $filtri = [];
+                if (!empty($_POST['filtro_stato'])) $filtri['stato'] = sanitizeInput($_POST['filtro_stato']);
+                if (!empty($_POST['filtro_citta'])) $filtri['citta'] = sanitizeInput($_POST['filtro_citta']);
+                $filtri_json = json_encode($filtri);
 
-        if (isset($_POST['delete_id'])) {
-            $stmt = $pdo->prepare("DELETE FROM gruppi_dinamici WHERE id = ? AND associazione_id = ?");
-            $stmt->execute([$_POST['delete_id'], $associazione_id]);
-            $message = "Gruppo eliminato."; $messageType = "success";
-        } elseif ($id) {
-            $stmt = $pdo->prepare("UPDATE gruppi_dinamici SET nome_gruppo=?, descrizione=?, filtri_json=? WHERE id=? AND associazione_id=?");
-            $stmt->execute([$nome_gruppo, $descrizione, $filtri_json, $id, $associazione_id]);
-            $message = "Gruppo aggiornato."; $messageType = "success";
-        } else {
-            $new_id = generateUuid();
-            $stmt = $pdo->prepare("INSERT INTO gruppi_dinamici (id, associazione_id, nome_gruppo, descrizione, filtri_json) VALUES (?, ?, ?, ?, ?)");
-            $stmt->execute([$new_id, $associazione_id, $nome_gruppo, $descrizione, $filtri_json]);
-            $message = "Gruppo creato."; $messageType = "success";
+                if ($id) {
+                    $stmt = $pdo->prepare("UPDATE gruppi_dinamici SET nome_gruppo=?, descrizione=?, filtri_json=? WHERE id=? AND associazione_id=?");
+                    $stmt->execute([$nome_gruppo, $descrizione, $filtri_json, $id, $associazione_id]);
+                    $message = "Gruppo aggiornato."; $messageType = "success";
+                } else {
+                    $new_id = generateUuid();
+                    $stmt = $pdo->prepare("INSERT INTO gruppi_dinamici (id, associazione_id, nome_gruppo, descrizione, filtri_json) VALUES (?, ?, ?, ?, ?)");
+                    $stmt->execute([$new_id, $associazione_id, $nome_gruppo, $descrizione, $filtri_json]);
+                    $message = "Gruppo creato."; $messageType = "success";
+                }
+            }
+        } catch (PDOException $e) {
+            error_log('config_gruppi.php PDOException: ' . $e->getMessage());
+            $message = "Errore durante l'operazione. Riprova più tardi.";
+            $messageType = "danger";
         }
     }
 }
@@ -81,7 +89,7 @@ $gruppi = $stmt_gruppi->fetchAll();
                     <td><small class="font-monospace"><?php echo htmlspecialchars($gruppo['filtri_json']); ?></small></td>
                     <td class="text-end">
                         <a href="index.php?page=config_gruppi&edit=<?php echo $gruppo['id']; ?>" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil"></i></a>
-                        <form method="POST" class="d-inline"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="delete_id" value="<?php echo $gruppo['id']; ?>"><button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button></form>
+                        <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questo gruppo?')"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="delete_id" value="<?php echo $gruppo['id']; ?>"><button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button></form>
                     </td>
                 </tr>
             <?php endforeach; ?>
@@ -101,7 +109,7 @@ $gruppi = $stmt_gruppi->fetchAll();
             <div class="mb-3"><label>Nome Gruppo</label><input type="text" name="nome_gruppo" class="form-control" value="<?php echo htmlspecialchars($editingGroup['nome_gruppo'] ?? ''); ?>" required></div>
             <div class="mb-3"><label>Descrizione</label><textarea name="descrizione" class="form-control"><?php echo htmlspecialchars($editingGroup['descrizione'] ?? ''); ?></textarea></div>
             <hr><p class="text-muted">Imposta Filtri:</p>
-            <div class="mb-3"><label>Stato Socio</label><select name="filtro_stato" class="form-select"><option value="">Qualsiasi</option><option value="Attivo" <?php echo ($filtri_editing['stato'] ?? '') == 'Attivo' ? 'selected' : ''; ?>>Attivo</option><option value="Sospeso">Sospeso</option></select></div>
+            <div class="mb-3"><label>Stato Socio</label><select name="filtro_stato" class="form-select"><option value="">Qualsiasi</option><option value="Attivo" <?php echo ($filtri_editing['stato'] ?? '') == 'Attivo' ? 'selected' : ''; ?>>Attivo</option><option value="Sospeso" <?php echo ($filtri_editing['stato'] ?? '') == 'Sospeso' ? 'selected' : ''; ?>>Sospeso</option></select></div>
             <div class="mb-3"><label>Città di residenza</label><input type="text" name="filtro_citta" class="form-control" value="<?php echo htmlspecialchars($filtri_editing['citta'] ?? ''); ?>"></div>
         </div>
         <div class="modal-footer">

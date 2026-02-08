@@ -5,12 +5,22 @@ include 'config.php';
 // Handle form submission for adding/editing administrators
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['delete_id'])) {
-        // Delete administrator
         $deleteId = $_POST['delete_id'];
-        // In a real application, we would delete from a users table
-        // For now, we'll just show a success message
-        $message = "Amministratore eliminato con successo!";
-        $messageType = "success";
+        try {
+            $stmt = $pdo->prepare("DELETE FROM users WHERE id = ?");
+            $stmt->execute([$deleteId]);
+            if ($stmt->rowCount() > 0) {
+                $message = "Amministratore eliminato con successo!";
+                $messageType = "success";
+            } else {
+                $message = "Amministratore non trovato.";
+                $messageType = "warning";
+            }
+        } catch (PDOException $e) {
+            error_log('amministratori.php delete error: ' . $e->getMessage());
+            $message = "Errore durante l'eliminazione. Riprova più tardi.";
+            $messageType = "danger";
+        }
     } elseif (isset($_POST['add_admin'])) {
         // Add administrator
         $username = sanitizeInput($_POST['username']);

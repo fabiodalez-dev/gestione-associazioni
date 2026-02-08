@@ -20,33 +20,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $message = "Errore di sicurezza: token CSRF non valido.";
         $messageType = "danger";
     } else {
-        $id = $_POST['id'] ?? null;
-        $nome = cleanInput($_POST['nome'] ?? '');
-        $descrizione = cleanInput($_POST['descrizione'] ?? '');
-        $costo_tessera = isset($_POST['costo_tessera']) && $_POST['costo_tessera'] !== ''
-            ? number_format((float)$_POST['costo_tessera'], 2, '.', '')
-            : null;
+        try {
+            if (isset($_POST['delete_id'])) {
+                $stmt = $pdo->prepare("DELETE FROM tipi_socio WHERE id = ? AND associazione_id = ?");
+                $stmt->execute([$_POST['delete_id'], $associazione_id]);
+                $redir = 'index.php?page=tipi-socio';
+                echo '<script>window.location.href='.json_encode($redir).';</script>';
+                exit;
+            } else {
+                $id = $_POST['id'] ?? null;
+                $nome = cleanInput($_POST['nome'] ?? '');
+                $descrizione = cleanInput($_POST['descrizione'] ?? '');
+                $costo_tessera = isset($_POST['costo_tessera']) && $_POST['costo_tessera'] !== ''
+                    ? number_format((float)$_POST['costo_tessera'], 2, '.', '')
+                    : null;
 
-        if (isset($_POST['delete_id'])) {
-            $stmt = $pdo->prepare("DELETE FROM tipi_socio WHERE id = ? AND associazione_id = ?");
-            $stmt->execute([$_POST['delete_id'], $associazione_id]);
-            // JS redirect to avoid header already sent
-            $redir = 'index.php?page=tipi-socio';
-            echo '<script>window.location.href='.json_encode($redir).';</script>';
-            exit;
-        } elseif ($id) {
-            $stmt = $pdo->prepare("UPDATE tipi_socio SET nome=?, descrizione=?, costo_tessera=? WHERE id=? AND associazione_id=?");
-            $stmt->execute([$nome, $descrizione, $costo_tessera, $id, $associazione_id]);
-            $redir = 'index.php?page=tipi-socio';
-            echo '<script>window.location.href='.json_encode($redir).';</script>';
-            exit;
-        } else {
-            $new_id = generateUuid();
-            $stmt = $pdo->prepare("INSERT INTO tipi_socio (id, associazione_id, nome, descrizione, costo_tessera) VALUES (?, ?, ?, ?, ?)");
-            $stmt->execute([$new_id, $associazione_id, $nome, $descrizione, $costo_tessera]);
-            $redir = 'index.php?page=tipi-socio';
-            echo '<script>window.location.href='.json_encode($redir).';</script>';
-            exit;
+                if ($id) {
+                    $stmt = $pdo->prepare("UPDATE tipi_socio SET nome=?, descrizione=?, costo_tessera=? WHERE id=? AND associazione_id=?");
+                    $stmt->execute([$nome, $descrizione, $costo_tessera, $id, $associazione_id]);
+                } else {
+                    $new_id = generateUuid();
+                    $stmt = $pdo->prepare("INSERT INTO tipi_socio (id, associazione_id, nome, descrizione, costo_tessera) VALUES (?, ?, ?, ?, ?)");
+                    $stmt->execute([$new_id, $associazione_id, $nome, $descrizione, $costo_tessera]);
+                }
+                $redir = 'index.php?page=tipi-socio';
+                echo '<script>window.location.href='.json_encode($redir).';</script>';
+                exit;
+            }
+        } catch (PDOException $e) {
+            error_log('tipi-socio.php PDOException: ' . $e->getMessage());
+            $message = "Errore durante l'operazione. Riprova più tardi.";
+            $messageType = "danger";
         }
     }
 }

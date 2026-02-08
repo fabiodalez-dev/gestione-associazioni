@@ -161,8 +161,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             }
                     }
 
-                    $message = 'Associazione aggiornata.';
-                    $messageType = 'success';
+                    // $message e $messageType già impostati con eventuali warning
                 } else {
                     $assoc_id = generateUuid();
                     $sql = "INSERT INTO associazioni (id, nome, email, partita_iva, codice_fiscale, indirizzo, citta, provincia, cap, telefono, tipo_scadenza_default, giorni_notifica_scadenza, costo_tessera, attiva) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";

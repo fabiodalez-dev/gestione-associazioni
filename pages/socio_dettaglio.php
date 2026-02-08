@@ -93,7 +93,7 @@ $storico = $stmt_storico->fetchAll();
         </div>
         <div class="ms-auto">
             <?php foreach ($tags as $tag): ?>
-                <span class="badge fs-6 me-1" style="background-color: <?php echo $tag['colore']; ?>; color: white;"><?php echo htmlspecialchars($tag['nome_tag']); ?></span>
+                <span class="badge fs-6 me-1" style="background-color: <?php echo htmlspecialchars($tag['colore'], ENT_QUOTES, 'UTF-8'); ?>; color: white;"><?php echo htmlspecialchars($tag['nome_tag']); ?></span>
             <?php endforeach; ?>
         </div>
     </div>
@@ -110,8 +110,8 @@ $storico = $stmt_storico->fetchAll();
     <div class="tab-pane fade show active" id="anagrafica" role="tabpanel"><div class="card mt-3"><div class="card-body row g-3">
         <div class="col-md-6"><strong>Email:</strong><p><?php echo htmlspecialchars($socio['email']); ?></p></div>
         <div class="col-md-6"><strong>Telefono:</strong><p><?php echo htmlspecialchars($socio['telefono'] ?? 'N/D'); ?></p></div>
-        <div class="col-md-6"><strong>Data di Nascita:</strong><p><?php echo date('d/m/Y', strtotime($socio['data_nascita'])); ?></p></div>
-        <div class="col-md-6"><strong>Data Iscrizione:</strong><p><?php echo date('d/m/Y', strtotime($socio['data_iscrizione'])); ?></p></div>
+        <div class="col-md-6"><strong>Data di Nascita:</strong><p><?php echo $socio['data_nascita'] ? date('d/m/Y', strtotime($socio['data_nascita'])) : 'N/D'; ?></p></div>
+        <div class="col-md-6"><strong>Data Iscrizione:</strong><p><?php echo $socio['data_iscrizione'] ? date('d/m/Y', strtotime($socio['data_iscrizione'])) : 'N/D'; ?></p></div>
         <div class="col-md-6"><strong>Stato:</strong><p><span class="badge bg-success"><?php echo htmlspecialchars($socio['stato']); ?></span></p></div>
         <?php foreach ($campi_valorizzati as $cv): ?>
         <div class="col-md-6"><strong><?php echo htmlspecialchars($cv['nome_campo']); ?>:</strong><p><?php echo htmlspecialchars($cv['valore']); ?></p></div>
@@ -167,10 +167,7 @@ $storico = $stmt_storico->fetchAll();
     <div class="tab-pane fade" id="storico" role="tabpanel">
         <div class="card mt-3"><div class="card-header"><h5>Storico Attività</h5></div><div class="card-body">
             <ul class="list-group list-group-flush">
-                <?php 
-                $stmt_storico = $pdo->prepare("SELECT st.*, u.email as utente_email FROM storico_attivita_socio st LEFT JOIN utenti u ON st.utente_id = u.id WHERE st.socio_id = ? ORDER BY st.data_attivita DESC");
-                $stmt_storico->execute([$socio_id]);
-                $storico = $stmt_storico->fetchAll();
+                <?php
                 if(empty($storico)):
                 ?>
                     <li class="list-group-item text-muted">Nessuna attività registrata.</li>

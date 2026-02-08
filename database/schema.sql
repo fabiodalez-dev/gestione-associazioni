@@ -7,7 +7,7 @@
 -- ============================================================================
 
 SET NAMES utf8mb4;
-SET FOREIGN_KEY_CHECKS = 1;
+SET FOREIGN_KEY_CHECKS = 0;
 
 -- ============================================================================
 -- 1. ASSOCIAZIONI — root entity, no foreign keys
@@ -138,6 +138,8 @@ CREATE TABLE IF NOT EXISTS soci (
     stato ENUM('Attivo', 'Sospeso', 'Radiato', 'Deceduto', 'Trasferito') DEFAULT 'Attivo',
     note TEXT,
     privacy_consenso BOOLEAN DEFAULT FALSE,
+    email_opt_out BOOLEAN DEFAULT FALSE,
+    email_opt_out_token CHAR(64) DEFAULT NULL,
     tipo_socio_id CHAR(36),
     categoria_socio_id CHAR(36),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -442,7 +444,107 @@ CREATE TABLE IF NOT EXISTS scadenze (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
--- 24. MIGRATIONS — schema version tracking (system table, no FKs)
+-- 24. SMTP_SETTINGS — SMTP config per association (FK → associazioni)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS smtp_settings (
+    id CHAR(36) PRIMARY KEY,
+    associazione_id CHAR(36) NOT NULL,
+    smtp_host VARCHAR(255) NOT NULL DEFAULT '',
+    smtp_port INT NOT NULL DEFAULT 587,
+    smtp_user VARCHAR(255) NOT NULL DEFAULT '',
+    smtp_pass_encrypted TEXT NOT NULL,
+    smtp_encryption ENUM('tls','ssl','none') NOT NULL DEFAULT 'tls',
+    from_email VARCHAR(255) NOT NULL DEFAULT '',
+    from_name VARCHAR(255) NOT NULL DEFAULT '',
+    reply_to_email VARCHAR(255) DEFAULT NULL,
+    reply_to_name VARCHAR(255) DEFAULT NULL,
+    is_verified BOOLEAN DEFAULT FALSE,
+    max_per_hour INT DEFAULT 100,
+    auto_benvenuto BOOLEAN DEFAULT TRUE,
+    auto_scadenza_tessera BOOLEAN DEFAULT TRUE,
+    auto_scadenza_quota BOOLEAN DEFAULT TRUE,
+    auto_rinnovo_tessera BOOLEAN DEFAULT FALSE,
+    auto_pagamento_quota BOOLEAN DEFAULT FALSE,
+    last_test_at DATETIME DEFAULT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_smtp_assoc (associazione_id),
+    FOREIGN KEY (associazione_id) REFERENCES associazioni(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================================
+-- 25. EMAIL_TEMPLATES — email templates per association (FK → associazioni)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS email_templates (
+    id CHAR(36) PRIMARY KEY,
+    associazione_id CHAR(36) NOT NULL,
+    codice VARCHAR(50) NOT NULL,
+    nome VARCHAR(255) NOT NULL,
+    oggetto VARCHAR(500) NOT NULL DEFAULT '',
+    corpo_html TEXT NOT NULL,
+    corpo_json TEXT DEFAULT NULL,
+    attivo BOOLEAN DEFAULT TRUE,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_template (associazione_id, codice),
+    INDEX idx_et_assoc (associazione_id),
+    FOREIGN KEY (associazione_id) REFERENCES associazioni(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================================
+-- 26. EMAIL_QUEUE — email sending queue (FK → associazioni, soci)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS email_queue (
+    id CHAR(36) PRIMARY KEY,
+    associazione_id CHAR(36) NOT NULL,
+    batch_id CHAR(36) NOT NULL,
+    socio_id CHAR(36) DEFAULT NULL,
+    to_email VARCHAR(255) NOT NULL,
+    to_name VARCHAR(255) DEFAULT '',
+    subject VARCHAR(500) NOT NULL,
+    body_html TEXT NOT NULL,
+    template_codice VARCHAR(50) DEFAULT NULL,
+    priority TINYINT DEFAULT 5,
+    status ENUM('pending','sending','sent','failed','cancelled') NOT NULL DEFAULT 'pending',
+    attempts INT DEFAULT 0,
+    max_attempts INT DEFAULT 3,
+    last_attempt_at DATETIME DEFAULT NULL,
+    error_message TEXT DEFAULT NULL,
+    sent_at DATETIME DEFAULT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_eq_status (status, created_at),
+    INDEX idx_eq_batch (batch_id),
+    INDEX idx_eq_assoc (associazione_id),
+    FOREIGN KEY (associazione_id) REFERENCES associazioni(id) ON DELETE CASCADE,
+    FOREIGN KEY (socio_id) REFERENCES soci(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================================
+-- 27. EMAIL_LOG — permanent email audit log (FK → associazioni, soci, utenti)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS email_log (
+    id CHAR(36) PRIMARY KEY,
+    associazione_id CHAR(36) NOT NULL,
+    batch_id CHAR(36) DEFAULT NULL,
+    socio_id CHAR(36) DEFAULT NULL,
+    to_email VARCHAR(255) NOT NULL,
+    to_name VARCHAR(255) DEFAULT '',
+    subject VARCHAR(500) NOT NULL,
+    template_codice VARCHAR(50) DEFAULT NULL,
+    status ENUM('sent','failed') NOT NULL,
+    error_message TEXT DEFAULT NULL,
+    sent_by CHAR(36) DEFAULT NULL,
+    sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_el_assoc (associazione_id),
+    INDEX idx_el_sent_at (sent_at),
+    INDEX idx_el_batch (batch_id),
+    FOREIGN KEY (associazione_id) REFERENCES associazioni(id) ON DELETE CASCADE,
+    FOREIGN KEY (socio_id) REFERENCES soci(id) ON DELETE SET NULL,
+    FOREIGN KEY (sent_by) REFERENCES utenti(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================================
+-- 28. MIGRATIONS — schema version tracking (system table, no FKs)
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS migrations (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -473,3 +575,6 @@ CREATE INDEX idx_socio_tags_socio_id ON socio_tags(socio_id);
 CREATE INDEX idx_storico_attivita_socio_socio_id ON storico_attivita_socio(socio_id);
 CREATE INDEX idx_documenti_socio_socio_id ON documenti_socio(socio_id);
 CREATE INDEX idx_gruppi_dinamici_associazione_id ON gruppi_dinamici(associazione_id);
+
+-- Re-enable foreign key checks
+SET FOREIGN_KEY_CHECKS = 1;

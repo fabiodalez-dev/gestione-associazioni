@@ -38,7 +38,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $message = "Quota eliminata con successo.";
         $messageType = "success";
     } elseif (isset($_POST['pay_id'])) {
-        $associazione_id = $associazione_id;
         $stmt = $pdo->prepare("UPDATE quote SET data_pagamento = ? WHERE id = ? AND associazione_id = ?");
         $stmt->execute([$_POST['payment_date'], $_POST['pay_id'], $associazione_id]);
         
@@ -52,6 +51,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $message = "Pagamento registrato con successo.";
         $messageType = "success";
+
+        // Best-effort: queue pagamento_quota email
+        if ($quota_info) {
+            try {
+                require_once __DIR__ . '/../includes/EmailService.php';
+                require_once __DIR__ . '/../includes/email_helpers.php';
+                $emailSvc = new EmailService($pdo, $associazione_id);
+                $smtpCfg = $emailSvc->loadSmtpConfig();
+                if ($emailSvc->isConfigured() && $smtpCfg !== null && !empty($smtpCfg['auto_pagamento_quota'])) {
+                    $tpl = $emailSvc->getTemplate('pagamento_quota');
+                    if ($tpl !== null && !empty($tpl['attivo'])) {
+                        $ph = buildPlaceholderValues($pdo, $associazione_id, $quota_info['socio_id'], [
+                            'IMPORTO' => $quota_info['importo'],
+                            'ANNO' => $quota_info['anno'],
+                            'DATA_PAGAMENTO' => $_POST['payment_date'],
+                        ]);
+                        $rendered = $emailSvc->renderTemplate('pagamento_quota', $ph);
+                        if ($rendered !== null) {
+                            $socioStmt = $pdo->prepare('SELECT nome, cognome, email FROM soci WHERE id = ? AND associazione_id = ?');
+                            $socioStmt->execute([$quota_info['socio_id'], $associazione_id]);
+                            $socioRow = $socioStmt->fetch();
+                            if ($socioRow && !empty($socioRow['email'])) {
+                                $emailSvc->queueEmail(
+                                    $socioRow['email'],
+                                    $socioRow['nome'] . ' ' . $socioRow['cognome'],
+                                    $rendered['subject'], $rendered['body'],
+                                    $quota_info['socio_id'], generateUuid(), 'pagamento_quota', 3
+                                );
+                            }
+                        }
+                    }
+                }
+            } catch (\Throwable $emailErr) {
+                error_log('quote.php email pagamento error: ' . $emailErr->getMessage());
+            }
+        }
     } else {
         $id = $_POST['id'] ?? null;
         $socio_id = $_POST['socio_id'];
@@ -92,10 +127,6 @@ if (isset($_GET['pay'])) {
     $stmt->execute([$_GET['pay'], $associazione_id]);
     $payingQuota = $stmt->fetch();
 }
-
-$stmt_soci = $pdo->prepare("SELECT id, CONCAT(cognome, ' ', nome) as nome_completo FROM soci WHERE associazione_id = ? AND stato = 'Attivo' ORDER BY cognome, nome");
-$stmt_soci->execute([$associazione_id]);
-$soci_attivi = $stmt_soci->fetchAll();
 
 $stmt_anni = $pdo->prepare("SELECT DISTINCT anno FROM quote WHERE associazione_id = ? ORDER BY anno DESC");
 $stmt_anni->execute([$associazione_id]);

@@ -117,7 +117,6 @@ if ($associazione_id) {
                 echo htmlspecialchars($tt, ENT_NOQUOTES | ENT_HTML5, 'UTF-8');
             ?></textarea></div>
         </div>
-        </div>
         <div class="modal-footer">
             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button>
             <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg me-1"></i>Salva</button>

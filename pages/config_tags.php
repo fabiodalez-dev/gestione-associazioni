@@ -18,27 +18,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $message = "Errore di sicurezza: token CSRF non valido.";
         $messageType = "danger";
     } else {
-    $id = $_POST['id'] ?? null;
-    $nome_tag = sanitizeInput($_POST['nome_tag']);
-    $colore = sanitizeInput($_POST['colore']);
+        try {
+            if (isset($_POST['delete_id'])) {
+                $stmt = $pdo->prepare("DELETE FROM tags WHERE id = ? AND associazione_id = ?");
+                $stmt->execute([$_POST['delete_id'], $associazione_id]);
+                $message = "Tag eliminato con successo.";
+                $messageType = "success";
+            } else {
+                $id = $_POST['id'] ?? null;
+                $nome_tag = sanitizeInput($_POST['nome_tag'] ?? '');
+                $colore = sanitizeInput($_POST['colore'] ?? '#888888');
 
-    if (isset($_POST['delete_id'])) {
-        $stmt = $pdo->prepare("DELETE FROM tags WHERE id = ? AND associazione_id = ?");
-        $stmt->execute([$_POST['delete_id'], $associazione_id]);
-        $message = "Tag eliminato con successo.";
-        $messageType = "success";
-    } elseif ($id) {
-        $stmt = $pdo->prepare("UPDATE tags SET nome_tag=?, colore=? WHERE id=? AND associazione_id=?");
-        $stmt->execute([$nome_tag, $colore, $id, $associazione_id]);
-        $message = "Tag aggiornato con successo.";
-        $messageType = "success";
-    } else {
-        $new_id = generateUuid();
-        $stmt = $pdo->prepare("INSERT INTO tags (id, associazione_id, nome_tag, colore) VALUES (?, ?, ?, ?)");
-        $stmt->execute([$new_id, $associazione_id, $nome_tag, $colore]);
-        $message = "Tag creato con successo.";
-        $messageType = "success";
-    }
+                if ($id) {
+                    $stmt = $pdo->prepare("UPDATE tags SET nome_tag=?, colore=? WHERE id=? AND associazione_id=?");
+                    $stmt->execute([$nome_tag, $colore, $id, $associazione_id]);
+                    $message = "Tag aggiornato con successo.";
+                    $messageType = "success";
+                } else {
+                    $new_id = generateUuid();
+                    $stmt = $pdo->prepare("INSERT INTO tags (id, associazione_id, nome_tag, colore) VALUES (?, ?, ?, ?)");
+                    $stmt->execute([$new_id, $associazione_id, $nome_tag, $colore]);
+                    $message = "Tag creato con successo.";
+                    $messageType = "success";
+                }
+            }
+        } catch (PDOException $e) {
+            error_log('config_tags.php PDOException: ' . $e->getMessage());
+            $message = "Errore durante l'operazione. Riprova più tardi.";
+            $messageType = "danger";
+        }
     }
 }
 

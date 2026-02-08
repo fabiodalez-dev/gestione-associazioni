@@ -168,7 +168,7 @@ if (!empty($socio['logo_url'])) {
         $logo_img = '<img src="' . htmlspecialchars($logoSrc) . '" style="height:48px; width:auto;">';
     } else {
         $path = realpath(APP_ROOT . '/' . ltrim($logoSrc, '/'));
-        if ($path && is_file($path)) {
+        if ($path && is_file($path) && strpos($path, realpath(APP_ROOT)) === 0) {
             $mime = mime_content_type($path);
             $data = base64_encode(file_get_contents($path));
             $logo_img = '<img src="data:' . htmlspecialchars($mime) . ';base64,' . $data . '" style="height:48px; width:auto;">';

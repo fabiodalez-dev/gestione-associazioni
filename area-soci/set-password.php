@@ -18,6 +18,9 @@ if (empty($token)) {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$error && $socio) {
+    if (!validateCSRFToken($_POST['csrf_token'] ?? '')) {
+        $error = "Errore di sicurezza: token CSRF non valido.";
+    } else {
     $password = $_POST['password'];
     $password_confirm = $_POST['password_confirm'];
 
@@ -28,6 +31,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$error && $socio) {
         $stmt = $pdo->prepare("UPDATE soci SET password_hash = ?, password_reset_token = NULL, password_reset_expires = NULL WHERE id = ?");
         $stmt->execute([$password_hash, $socio['id']]);
         $success = "Password impostata con successo! Ora puoi effettuare il login.";
+    }
     }
 }
 ?>
@@ -40,6 +44,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$error && $socio) {
             <?php if($success): ?><div class="alert alert-success"><?php echo htmlspecialchars($success); ?></div><a href='login.php' class='btn btn-primary w-100'>Vai al Login</a><?php else: ?>
                 <?php if(!$error): ?>
                 <form method="POST">
+                    <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                     <div class="mb-3"><label>Nuova Password</label><input type="password" name="password" class="form-control" required></div>
                     <div class="mb-3"><label>Conferma Password</label><input type="password" name="password_confirm" class="form-control" required></div>
                     <button type="submit" class="btn btn-primary w-100">Imposta Password</button>

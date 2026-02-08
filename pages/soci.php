@@ -51,8 +51,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $message = "Errore di sicurezza: token CSRF non valido.";
         $messageType = "danger";
     } else {
-        $pdo->beginTransaction();
         try {
+        $pdo->beginTransaction();
         // Eliminazione preset filtri
         if (isset($_POST['delete_filter_preset']) && !empty($_POST['preset_id_delete'])) {
             $presetId = $_POST['preset_id_delete'];
@@ -93,6 +93,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt = $pdo->prepare("DELETE FROM soci WHERE id = ? AND associazione_id = ?");
             $stmt->execute([$_POST['delete_id'], $associazione_id]);
             $message = "Socio eliminato con successo.";
+            $messageType = "success";
         } else {
             $id = $_POST['id'] ?? null;
             $socio_data = [
@@ -289,6 +290,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
         $pdo->commit();
+
+        // Email benvenuto (best-effort, outside transaction, only for new soci)
+        if (isset($socio_id, $socio_data) && empty($id)) {
+            try {
+                require_once __DIR__ . '/../includes/EmailService.php';
+                require_once __DIR__ . '/../includes/email_helpers.php';
+                $emailSvc = new EmailService($pdo, $associazione_id);
+                $smtpCfg = $emailSvc->loadSmtpConfig();
+                if ($emailSvc->isConfigured() && $smtpCfg && !empty($smtpCfg['auto_benvenuto'])) {
+                    $tpl = $emailSvc->getTemplate('benvenuto');
+                    if ($tpl && $tpl['attivo']) {
+                        $ph = buildPlaceholderValues($pdo, $associazione_id, $socio_id);
+                        $rendered = $emailSvc->renderTemplate('benvenuto', $ph);
+                        if ($rendered) {
+                            $emailSvc->queueEmail(
+                                $socio_data['email'],
+                                $socio_data['nome'] . ' ' . $socio_data['cognome'],
+                                $rendered['subject'],
+                                $rendered['body'],
+                                $socio_id,
+                                generateUuid(),
+                                'benvenuto',
+                                3
+                            );
+                        }
+                    }
+                }
+            } catch (Throwable $e) {
+                error_log('soci.php email benvenuto error: ' . $e->getMessage());
+            }
+        }
         } catch (Exception $e) {
             $pdo->rollBack();
             error_log("soci.php save error: " . $e->getMessage());
@@ -1362,7 +1394,6 @@ function deletePreset(){
         </div>
     </form>
 </div></div>
-};
 
 ?>
 </div>

@@ -1,6 +1,7 @@
 {
     "require": {
-        "dompdf/dompdf": "^3.0"
+        "dompdf/dompdf": "^3.0",
+        "phpmailer/phpmailer": "^7.0"
     },
     "require-dev": {
         "phpstan/phpstan": "^2.1"
