@@ -174,6 +174,7 @@ CREATE TABLE IF NOT EXISTS tessere (
     stato ENUM('Attiva', 'Scaduta', 'Sospesa', 'Annullata') DEFAULT 'Attiva',
     qr_code_url TEXT,
     template_tessera VARCHAR(100),
+    evento_creazione_id CHAR(36) NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE(associazione_id, numero_tessera),
@@ -544,7 +545,26 @@ CREATE TABLE IF NOT EXISTS email_log (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
--- 28. MIGRATIONS — schema version tracking (system table, no FKs)
+-- 28. API_KEYS — REST API authentication keys (FK → associazioni)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS api_keys (
+    id CHAR(36) PRIMARY KEY,
+    associazione_id CHAR(36) NOT NULL,
+    api_key VARCHAR(64) UNIQUE NOT NULL,
+    nome VARCHAR(255) NOT NULL,
+    permessi JSON NOT NULL,
+    attiva BOOLEAN DEFAULT TRUE,
+    ultimo_utilizzo DATETIME NULL,
+    scadenza DATE NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_api_key (api_key),
+    INDEX idx_api_assoc (associazione_id),
+    FOREIGN KEY (associazione_id) REFERENCES associazioni(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================================
+-- 29. MIGRATIONS — schema version tracking (system table, no FKs)
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS migrations (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -564,6 +584,7 @@ CREATE INDEX idx_soci_associazione_id ON soci(associazione_id);
 CREATE INDEX idx_soci_cognome_nome ON soci(cognome, nome);
 CREATE INDEX idx_tessere_socio_id ON tessere(socio_id);
 CREATE INDEX idx_tessere_associazione_id ON tessere(associazione_id);
+CREATE INDEX idx_tessere_evento_creazione ON tessere(evento_creazione_id);
 CREATE INDEX idx_quote_socio_id ON quote(socio_id);
 CREATE INDEX idx_quote_associazione_id ON quote(associazione_id);
 CREATE INDEX idx_eventi_associazione_id ON eventi(associazione_id);

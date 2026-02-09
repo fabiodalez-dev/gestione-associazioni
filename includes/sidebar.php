@@ -29,6 +29,9 @@
 
         <hr>
 
+        <?php $sidebar_has_assoc = !empty($_SESSION['associazione_id']); ?>
+
+        <?php if ($sidebar_has_assoc): ?>
         <h6 class="sidebar-heading d-flex justify-content-between align-items-center px-3 mt-4 mb-1 text-muted text-uppercase">
             <span>Menu Principale</span>
         </h6>
@@ -86,6 +89,13 @@
                 </a>
             </li>
         </ul>
+        <?php else: ?>
+        <div class="px-3 mt-4 mb-3">
+            <div class="alert alert-warning small mb-0 py-2">
+                <i class="bi bi-info-circle me-1"></i>Seleziona un'associazione per accedere al menu.
+            </div>
+        </div>
+        <?php endif; ?>
 
         <h6 class="sidebar-heading d-flex justify-content-between align-items-center px-3 mt-4 mb-1 text-muted text-uppercase">
             <span>Amministrazione</span>
@@ -99,6 +109,7 @@
                 </a>
             </li>
             <?php endif; ?>
+            <?php if ($sidebar_has_assoc): ?>
             <li class="nav-item">
                 <a class="nav-link <?php echo (isset($_GET['page']) && $_GET['page'] == 'configurazioni') ? 'active' : ''; ?>" href="index.php?page=configurazioni">
                     <i class="bi bi-gear me-2"></i>
@@ -111,17 +122,12 @@
                     Utenti
                 </a>
             </li>
-            <?php 
-            $role = $_SESSION['user_role'] ?? ''; 
-            $has_assoc = !empty($_SESSION['associazione_id'] ?? null);
-            if ($has_assoc): ?>
             <li class="nav-item">
                 <a class="nav-link <?php echo (isset($_GET['page']) && $_GET['page'] == 'configurazioni' && (isset($_GET['section']) && $_GET['section']==='sedi')) ? 'active' : ''; ?>" href="index.php?page=configurazioni&section=sedi">
                     <i class="bi bi-geo-alt me-2"></i>
                     Sedi
                 </a>
             </li>
-            <?php endif; ?>
             <li class="nav-item">
                 <a class="nav-link <?php echo (isset($_GET['page']) && $_GET['page'] == 'config_campi') ? 'active' : ''; ?>" href="index.php?page=config_campi">
                     <i class="bi bi-journal-plus me-2"></i>
@@ -152,6 +158,20 @@
                     Gruppi Dinamici
                 </a>
             </li>
+            <?php $apiPages = ['api-keys', 'api-docs']; $apiActive = isset($_GET['page']) && in_array($_GET['page'], $apiPages, true); ?>
+            <li class="nav-item">
+                <a class="nav-link d-flex justify-content-between align-items-center <?php echo $apiActive ? '' : 'collapsed'; ?>" data-bs-toggle="collapse" href="#apiSubmenu" role="button" aria-expanded="<?php echo $apiActive ? 'true' : 'false'; ?>">
+                    <span><i class="bi bi-hdd-network me-2"></i>API REST</span>
+                    <i class="bi bi-chevron-down small"></i>
+                </a>
+                <div class="collapse <?php echo $apiActive ? 'show' : ''; ?>" id="apiSubmenu">
+                    <ul class="nav flex-column ms-3">
+                        <li class="nav-item"><a class="nav-link py-1 <?php echo (($_GET['page'] ?? '') === 'api-keys') ? 'active' : ''; ?>" href="index.php?page=api-keys"><i class="bi bi-key me-2"></i>Chiavi API</a></li>
+                        <li class="nav-item"><a class="nav-link py-1 <?php echo (($_GET['page'] ?? '') === 'api-docs') ? 'active' : ''; ?>" href="index.php?page=api-docs"><i class="bi bi-book me-2"></i>Documentazione</a></li>
+                    </ul>
+                </div>
+            </li>
+            <?php endif; ?>
         </ul>
         
         <hr>

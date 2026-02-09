@@ -260,7 +260,7 @@ try {
                                 </a>
                                 <form method="POST" class="d-inline" onsubmit="return confirm('Sei sicuro di voler eliminare questo documento?')">
                                     <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
-                                    <input type="hidden" name="delete_id" value="<?php echo $doc['id']; ?>">
+                                    <input type="hidden" name="delete_id" value="<?php echo htmlspecialchars($doc['id'], ENT_QUOTES); ?>">
                                     <button type="submit" class="btn btn-sm btn-outline-danger">
                                         <i class="bi bi-trash"></i> Elimina
                                     </button>

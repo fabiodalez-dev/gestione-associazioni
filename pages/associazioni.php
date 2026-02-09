@@ -56,8 +56,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $params = [
                         $data['nome'],$data['email'],$data['partita_iva'],$data['codice_fiscale'],$data['indirizzo'],$data['citta'],$data['provincia'],$data['cap'],$data['telefono'],$data['tipo_scadenza_default'],$data['giorni_notifica_scadenza'],$data['costo_tessera'],$data['attiva'],$id
                     ];
-                    $stmt = $pdo->prepare($sql);
-                    $stmt->execute($params);
+                    try {
+                        $stmt = $pdo->prepare($sql);
+                        $stmt->execute($params);
+                    } catch (PDOException $e) {
+                        if (str_contains($e->getMessage(), 'Duplicate entry')) {
+                            $message = 'Errore: esiste già un\'associazione con questa email.';
+                        } else {
+                            error_log('associazioni.php UPDATE PDOException: ' . $e->getMessage());
+                            $message = 'Errore durante l\'aggiornamento dell\'associazione.';
+                        }
+                        $messageType = 'danger';
+                        goto end_post;
+                    }
                     $assoc_id = $id;
                     $message = 'Associazione aggiornata con successo.';
                     $messageType = 'success';
@@ -84,14 +95,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // Link admin esistente, se richiesto
                     if (!empty($_POST['link_admin_user_id'])) {
                         $userId = $_POST['link_admin_user_id'];
-                        // Permetti link solo a utenti non super_admin
                         $stmtChk = $pdo->prepare("SELECT role FROM users WHERE id = ?");
                         $stmtChk->execute([$userId]);
                         $role = $stmtChk->fetchColumn();
-                        if ($role && $role !== 'super_admin') {
-                            $pdo->prepare("UPDATE users SET associazione_id = ?, role = 'admin_associazione' WHERE id = ?")->execute([$assoc_id, $userId]);
+                        if ($role) {
+                            // Super admin mantiene il proprio ruolo, gli altri diventano admin_associazione
+                            if ($role === 'super_admin') {
+                                $pdo->prepare("UPDATE users SET associazione_id = ? WHERE id = ?")->execute([$assoc_id, $userId]);
+                            } else {
+                                $pdo->prepare("UPDATE users SET associazione_id = ?, role = 'admin_associazione' WHERE id = ?")->execute([$assoc_id, $userId]);
+                            }
                         } else {
-                            $message .= ' (Admin non collegato: utente non valido)';
+                            $message .= ' (Admin non collegato: utente non trovato)';
                             $messageType = 'warning';
                         }
                     }
@@ -168,8 +183,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $params = [
                         $assoc_id,$data['nome'],$data['email'],$data['partita_iva'],$data['codice_fiscale'],$data['indirizzo'],$data['citta'],$data['provincia'],$data['cap'],$data['telefono'],$data['tipo_scadenza_default'],$data['giorni_notifica_scadenza'],$data['costo_tessera'],$data['attiva']
                     ];
-                    $stmt = $pdo->prepare($sql);
-                    $stmt->execute($params);
+                    try {
+                        $stmt = $pdo->prepare($sql);
+                        $stmt->execute($params);
+                    } catch (PDOException $e) {
+                        if (str_contains($e->getMessage(), 'Duplicate entry')) {
+                            $message = 'Errore: esiste già un\'associazione con questa email.';
+                            $messageType = 'danger';
+                            goto end_post;
+                        }
+                        error_log('associazioni.php INSERT PDOException: ' . $e->getMessage());
+                        $message = 'Errore durante la creazione dell\'associazione.';
+                        $messageType = 'danger';
+                        goto end_post;
+                    }
                     $message = 'Associazione creata con successo.';
                     $messageType = 'success';
 
@@ -198,10 +225,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $stmtChk = $pdo->prepare("SELECT role, associazione_id FROM users WHERE id = ?");
                         $stmtChk->execute([$userId]);
                         $row = $stmtChk->fetch();
-                        if ($row && $row['role'] !== 'super_admin' && empty($row['associazione_id'])) {
-                            $pdo->prepare("UPDATE users SET associazione_id = ?, role = 'admin_associazione' WHERE id = ?")->execute([$assoc_id, $userId]);
+                        if ($row && empty($row['associazione_id'])) {
+                            // Super admin mantiene il proprio ruolo
+                            if ($row['role'] === 'super_admin') {
+                                $pdo->prepare("UPDATE users SET associazione_id = ? WHERE id = ?")->execute([$assoc_id, $userId]);
+                            } else {
+                                $pdo->prepare("UPDATE users SET associazione_id = ?, role = 'admin_associazione' WHERE id = ?")->execute([$assoc_id, $userId]);
+                            }
                         } else {
-                            $message .= ' (Admin esistente non collegato: non valido o già collegato)';
+                            $message .= ' (Admin esistente non collegato: non trovato o già collegato)';
                             $messageType = 'warning';
                         }
                     }
@@ -306,6 +338,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 }
+end_post:
 
 // Data for list and editing
 $editing = null;
@@ -375,10 +408,10 @@ $rows = $pdo->query("SELECT a.*,
                         <td><span class="badge bg-primary"><?php echo (int)$r['soci_count']; ?></span></td>
                         <td><span class="badge bg-light text-dark"><?php echo htmlspecialchars($r['tipo_scadenza_default']); ?></span></td>
                         <td class="text-end">
-                            <a href="index.php?page=associazioni&edit=<?php echo $r['id']; ?>" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil"></i></a>
+                            <a href="index.php?page=associazioni&edit=<?php echo htmlspecialchars($r['id'], ENT_QUOTES); ?>" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil"></i></a>
                             <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questa associazione? Tutti i dati collegati saranno rimossi.')">
                                 <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
-                                <input type="hidden" name="delete_id" value="<?php echo $r['id']; ?>">
+                                <input type="hidden" name="delete_id" value="<?php echo htmlspecialchars($r['id'], ENT_QUOTES); ?>">
                                 <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
                             </form>
                         </td>
@@ -550,7 +583,7 @@ $rows = $pdo->query("SELECT a.*,
                     <select class="form-select" name="clone_from_assoc_id">
                         <option value="">-- Seleziona --</option>
                         <?php foreach ($rows as $r): ?>
-                            <option value="<?php echo $r['id']; ?>"><?php echo htmlspecialchars($r['nome']); ?></option>
+                            <option value="<?php echo htmlspecialchars($r['id'], ENT_QUOTES); ?>"><?php echo htmlspecialchars($r['nome']); ?></option>
                         <?php endforeach; ?>
                     </select>
                 </div>
@@ -623,7 +656,7 @@ $rows = $pdo->query("SELECT a.*,
                                         <form method="POST" class="d-inline" onsubmit="return confirm('Rimuovere questo amministratore dall\'associazione?')">
                                             <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                                             <input type="hidden" name="id" value="<?php echo htmlspecialchars($editing['id']); ?>">
-                                            <input type="hidden" name="remove_admin_user_id" value="<?php echo $u['id']; ?>">
+                                            <input type="hidden" name="remove_admin_user_id" value="<?php echo htmlspecialchars($u['id'], ENT_QUOTES); ?>">
                                             <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-x"></i></button>
                                         </form>
                                     </td>
@@ -647,7 +680,7 @@ $rows = $pdo->query("SELECT a.*,
                     <select class="form-select" name="clone_from_assoc_id">
                         <option value="">-- Seleziona --</option>
                         <?php foreach ($rows as $r): if (($editing['id'] ?? '') === $r['id']) continue; ?>
-                            <option value="<?php echo $r['id']; ?>"><?php echo htmlspecialchars($r['nome']); ?></option>
+                            <option value="<?php echo htmlspecialchars($r['id'], ENT_QUOTES); ?>"><?php echo htmlspecialchars($r['nome']); ?></option>
                         <?php endforeach; ?>
                     </select>
                 </div>
@@ -684,7 +717,7 @@ $rows = $pdo->query("SELECT a.*,
                     let timer;
                     function render(items){
                         if (!items || items.length===0){ box.style.display='none'; box.textContent=''; return; }
-                        const filtered = items.filter(u => u.role === 'admin_associazione' && (u.associazione_id === null || u.associazione_id === ''));
+                        const filtered = items.filter(u => (u.associazione_id === null || u.associazione_id === ''));
                         if (filtered.length === 0){ box.style.display='none'; box.textContent=''; return; }
                         box.textContent = '';
                         filtered.forEach(u => {
@@ -746,8 +779,8 @@ document.addEventListener('DOMContentLoaded', function(){
     let timer;
     function render(items){
       if (!items || items.length===0){ box.style.display='none'; box.textContent=''; return; }
-      // filter out super_admin and those already linked
-      const filtered = items.filter(u => u.role !== 'super_admin' && (u.associazione_id === null || u.associazione_id === '' ));
+      // filter out those already linked to another association
+      const filtered = items.filter(u => (u.associazione_id === null || u.associazione_id === '' ));
       if (filtered.length === 0){ box.style.display='none'; box.textContent=''; return; }
       box.textContent = '';
       filtered.forEach(function(u){

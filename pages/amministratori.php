@@ -4,7 +4,10 @@ include 'config.php';
 
 // Handle form submission for adding/editing administrators
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (isset($_POST['delete_id'])) {
+    if (!validateCSRFToken($_POST['csrf_token'] ?? '')) {
+        $message = "Errore di sicurezza: token CSRF non valido.";
+        $messageType = "danger";
+    } elseif (isset($_POST['delete_id'])) {
         $deleteId = $_POST['delete_id'];
         try {
             $stmt = $pdo->prepare("DELETE FROM users WHERE id = ?");
@@ -35,6 +38,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $messageType = "error";
         } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $message = "Email non valida!";
+            $messageType = "error";
+        } elseif (strlen($password) < 8) {
+            $message = "La password deve avere almeno 8 caratteri!";
             $messageType = "error";
         } elseif ($role === 'admin_associazione' && empty($associazione_id)) {
             $message = "Gli admin di associazione devono essere collegati a un'associazione!";
@@ -87,14 +93,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $message = "Username o email già esistenti!"; $messageType = "error";
                 } else {
                     if ($role === 'super_admin') { $associazione_id = null; }
-                    if (!empty($password)) {
-                        $stmt = $pdo->prepare("UPDATE users SET username=?, email=?, password_hash=?, role=?, associazione_id=? WHERE id=?");
-                        $stmt->execute([$username, $email, password_hash($password, PASSWORD_DEFAULT), $role, $associazione_id, $id]);
+                    if (!empty($password) && strlen($password) < 8) {
+                        $message = "La password deve avere almeno 8 caratteri!"; $messageType = "error";
                     } else {
-                        $stmt = $pdo->prepare("UPDATE users SET username=?, email=?, role=?, associazione_id=? WHERE id=?");
-                        $stmt->execute([$username, $email, $role, $associazione_id, $id]);
+                        if (!empty($password)) {
+                            $stmt = $pdo->prepare("UPDATE users SET username=?, email=?, password_hash=?, role=?, associazione_id=? WHERE id=?");
+                            $stmt->execute([$username, $email, password_hash($password, PASSWORD_DEFAULT), $role, $associazione_id, $id]);
+                        } else {
+                            $stmt = $pdo->prepare("UPDATE users SET username=?, email=?, role=?, associazione_id=? WHERE id=?");
+                            $stmt->execute([$username, $email, $role, $associazione_id, $id]);
+                        }
+                        $message = "Amministratore aggiornato con successo!"; $messageType = "success";
                     }
-                    $message = "Amministratore aggiornato con successo!"; $messageType = "success";
                 }
             } catch (Exception $e) {
                 error_log('amministratori.php update error: ' . $e->getMessage());
@@ -134,12 +144,7 @@ try {
         // Might fail if there are existing records with 'admin' role
     }
     
-    // Insert default admin if no users exist
-    $stmt = $pdo->query("SELECT COUNT(*) as count FROM users");
-    if ($stmt->fetch()['count'] == 0) {
-        $stmt = $pdo->prepare("INSERT INTO users (username, email, password_hash, role) VALUES (?, ?, ?, ?)");
-        $stmt->execute(['admin', 'admin@associazione.it', password_hash('admin123', PASSWORD_DEFAULT), 'super_admin']);
-    }
+    // Default admin creation removed — the installer (install.php) handles initial admin creation securely.
 } catch (PDOException $e) {
     // Table might already exist
 }
@@ -162,9 +167,13 @@ try {
 // Editing user (open modal)
 $editingUser = null;
 if (isset($_GET['edit'])) {
-    $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
-    $stmt->execute([$_GET['edit']]);
-    $editingUser = $stmt->fetch();
+    try {
+        $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
+        $stmt->execute([$_GET['edit']]);
+        $editingUser = $stmt->fetch();
+    } catch (PDOException $e) {
+        error_log('amministratori.php edit fetch error: ' . $e->getMessage());
+    }
 }
 
 // Get all associations for the form
@@ -230,11 +239,12 @@ try {
                                 <?php endif; ?>
                             </td>
                             <td class="text-end">
-                                <a href="index.php?page=amministratori&edit=<?php echo $admin['id']; ?>" class="btn btn-sm btn-outline-primary">
+                                <a href="index.php?page=amministratori&edit=<?php echo htmlspecialchars($admin['id'], ENT_QUOTES); ?>" class="btn btn-sm btn-outline-primary">
                                     <i class="bi bi-pencil"></i> Modifica
                                 </a>
                                 <form method="POST" class="d-inline" onsubmit="return confirm('Sei sicuro di voler eliminare questo amministratore?')">
-                                    <input type="hidden" name="delete_id" value="<?php echo $admin['id']; ?>">
+                                    <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
+                                    <input type="hidden" name="delete_id" value="<?php echo htmlspecialchars($admin['id'], ENT_QUOTES); ?>">
                                     <button type="submit" class="btn btn-sm btn-outline-danger">
                                         <i class="bi bi-trash"></i> Elimina
                                     </button>
@@ -257,6 +267,7 @@ try {
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <form method="POST">
+                <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                 <?php if ($editingUser): ?>
                     <input type="hidden" name="edit_admin" value="1">
                     <input type="hidden" name="id" value="<?php echo htmlspecialchars($editingUser['id']); ?>">
@@ -275,7 +286,7 @@ try {
                     <div class="mb-3">
                         <label class="form-label">Password <?php echo $editingUser ? '<small class="text-muted">(lascia vuoto per non cambiare)</small>' : ''; ?></label>
                         <input type="password" class="form-control" name="password" <?php echo $editingUser ? '' : 'required'; ?>>
-                        <div class="form-text">Minimo 6 caratteri</div>
+                        <div class="form-text">Minimo 8 caratteri</div>
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Ruolo</label>

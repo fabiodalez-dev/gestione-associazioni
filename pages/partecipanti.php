@@ -152,6 +152,11 @@ try {
     $forse = count(array_filter($partecipanti, function($p) { return $p['stato_partecipazione'] === 'Forse'; }));
     $nonPartecipa = count(array_filter($partecipanti, function($p) { return $p['stato_partecipazione'] === 'Non Partecipa'; }));
 
+    // Count tessere create at this event
+    $stmt_tc = $pdo->prepare("SELECT COUNT(*) FROM tessere WHERE evento_creazione_id = ? AND associazione_id = ?");
+    $stmt_tc->execute([$evento_id, $associazione_id]);
+    $tessere_create_evento = (int)$stmt_tc->fetchColumn();
+
 } catch (PDOException $e) {
     error_log('partecipanti.php fetch: ' . $e->getMessage());
     die("Errore nel recupero dati. Riprova più tardi.");
@@ -213,6 +218,16 @@ try {
             </div>
         </div>
     </div>
+    <?php if ($tessere_create_evento > 0): ?>
+    <div class="col-md-6 col-lg-3 mt-3">
+        <div class="card border-primary">
+            <div class="card-body text-center">
+                <h5 class="card-title text-primary"><i class="bi bi-credit-card me-1"></i>Tessere create</h5>
+                <h2 class="display-6"><?php echo $tessere_create_evento; ?></h2>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
 </div>
 
 <div class="d-flex justify-content-between mb-3">
@@ -302,12 +317,12 @@ try {
                                 <?php endif; ?>
                             </td>
                             <td class="text-end">
-                                <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editModal<?php echo $partecipante['id']; ?>">
+                                <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editModal<?php echo htmlspecialchars($partecipante['id'], ENT_QUOTES); ?>">
                                     <i class="bi bi-pencil"></i> Modifica
                                 </button>
                                 <form method="POST" class="d-inline" onsubmit="return confirm('Rimuovere questo partecipante?')">
                                     <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
-                                    <input type="hidden" name="remove_partecipante" value="<?php echo $partecipante['id']; ?>">
+                                    <input type="hidden" name="remove_partecipante" value="<?php echo htmlspecialchars($partecipante['id'], ENT_QUOTES); ?>">
                                     <button type="submit" class="btn btn-sm btn-outline-danger">
                                         <i class="bi bi-trash"></i> Rimuovi
                                     </button>
@@ -316,7 +331,7 @@ try {
                         </tr>
 
                         <!-- Edit Modal for each participant -->
-                        <div class="modal fade" id="editModal<?php echo $partecipante['id']; ?>" tabindex="-1">
+                        <div class="modal fade" id="editModal<?php echo htmlspecialchars($partecipante['id'], ENT_QUOTES); ?>" tabindex="-1">
                             <div class="modal-dialog">
                                 <div class="modal-content">
                                     <div class="modal-header">
@@ -327,7 +342,7 @@ try {
                                         <div class="modal-body">
                                             <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                                             <input type="hidden" name="update_partecipazione" value="1">
-                                            <input type="hidden" name="partecipante_id" value="<?php echo $partecipante['id']; ?>">
+                                            <input type="hidden" name="partecipante_id" value="<?php echo htmlspecialchars($partecipante['id'], ENT_QUOTES); ?>">
 
                                             <div class="mb-3">
                                                 <label class="form-label">Stato Partecipazione</label>
@@ -376,7 +391,7 @@ try {
                         <select class="form-select" name="socio_id" required>
                             <option value="">Seleziona un socio</option>
                             <?php foreach ($sociDisponibili as $socio): ?>
-                                <option value="<?php echo $socio['id']; ?>">
+                                <option value="<?php echo htmlspecialchars($socio['id'], ENT_QUOTES); ?>">
                                     <?php echo htmlspecialchars($socio['nome_completo']); ?>
                                 </option>
                             <?php endforeach; ?>

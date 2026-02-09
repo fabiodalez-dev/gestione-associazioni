@@ -10,6 +10,9 @@ parameters:
         - config.php
         - index.php
         - install.php
+        - verifica-tessera.php
+        - checkin.php
+        - scanner-tessera.php
     excludePaths:
         - vendor
         - uploads

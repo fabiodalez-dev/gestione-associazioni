@@ -3,8 +3,8 @@
  * Associazione Soci Manager - Configuration File v2.0 (SaaS)
  */
 
-// Security Headers - send immediately before any output
-if (!defined('INSTALLER_ACTIVE') && !headers_sent()) {
+// Security Headers - send immediately before any output (skip per API: gestisce i suoi headers)
+if (!defined('INSTALLER_ACTIVE') && !defined('API_REQUEST') && !headers_sent()) {
     header('X-Content-Type-Options: nosniff');
     header('X-Frame-Options: SAMEORIGIN');
     header('X-XSS-Protection: 1; mode=block');
@@ -23,13 +23,14 @@ if (!defined('INSTALLER_ACTIVE') && !headers_sent()) {
          . "script-src 'self' 'unsafe-inline'" . $script_extra . " https://cdn.jsdelivr.net https://cdnjs.cloudflare.com http://cdn.jsdelivr.net http://cdnjs.cloudflare.com; "
          . "img-src 'self' data:; "
          . "connect-src 'self'; "
-         . "font-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com http://cdn.jsdelivr.net http://cdnjs.cloudflare.com;";
+         . "font-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com http://cdn.jsdelivr.net http://cdnjs.cloudflare.com; "
+         . "worker-src 'self';";
     if ($is_https) { $csp = "upgrade-insecure-requests; " . $csp; }
     header("Content-Security-Policy: $csp");
 }
 
-// Avvia la sessione in modo sicuro
-if (session_status() === PHP_SESSION_NONE) {
+// Avvia la sessione in modo sicuro (skip per richieste API stateless)
+if (session_status() === PHP_SESSION_NONE && !defined('API_REQUEST')) {
     // Configurazioni sicurezza sessione
     ini_set('session.cookie_httponly', '1');
     // Imposta cookie secure solo se HTTPS attivo
@@ -78,8 +79,9 @@ if (!defined('APP_ROOT')) define('APP_ROOT', __DIR__);
 if (!defined('UPLOADS_PATH')) define('UPLOADS_PATH', APP_ROOT . '/uploads');
 
 // --- Verifica installazione tramite lock file ---
+$_installerBypass = ['install.php', 'verifica-tessera.php', 'checkin.php', 'scanner-tessera.php'];
 if (!file_exists(__DIR__ . '/.installed')) {
-    if (!defined('INSTALLER_ACTIVE') && basename($_SERVER['PHP_SELF']) !== 'install.php') {
+    if (!defined('INSTALLER_ACTIVE') && !defined('API_REQUEST') && !in_array(basename($_SERVER['PHP_SELF']), $_installerBypass, true)) {
         header('Location: install.php');
         exit;
     }
@@ -95,11 +97,17 @@ try {
     ];
     $pdo = new PDO($dsn, DB_USER, DB_PASS, $options);
 } catch (PDOException $e) {
-    if (!defined('INSTALLER_ACTIVE') && basename($_SERVER['PHP_SELF']) !== 'install.php') {
+    if (!defined('INSTALLER_ACTIVE') && !defined('API_REQUEST') && !in_array(basename($_SERVER['PHP_SELF']), $_installerBypass, true)) {
         header('Location: install.php');
         exit;
     } else {
         error_log('config.php DB connection error: ' . $e->getMessage());
+        if (defined('API_REQUEST')) {
+            http_response_code(500);
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(['success' => false, 'error' => 'Errore di connessione al database.']);
+            exit;
+        }
         die("Errore di connessione al database. Verifica la configurazione.");
     }
 }
@@ -419,6 +427,14 @@ if (!function_exists('ensureTesseraCostColumns')) {
         try {
             if (!columnExists($pdo, 'tipi_socio', 'costo_tessera')) {
                 $pdo->exec("ALTER TABLE tipi_socio ADD COLUMN costo_tessera DECIMAL(10,2) NULL AFTER descrizione");
+            }
+        } catch (PDOException $e) {
+            // ignore
+        }
+        try {
+            if (!columnExists($pdo, 'tessere', 'evento_creazione_id')) {
+                $pdo->exec("ALTER TABLE tessere ADD COLUMN evento_creazione_id CHAR(36) NULL AFTER template_tessera");
+                $pdo->exec("ALTER TABLE tessere ADD INDEX idx_tessere_evento_creazione (evento_creazione_id)");
             }
         } catch (PDOException $e) {
             // ignore

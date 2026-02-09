@@ -169,16 +169,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmtCfg = $pdo->prepare("SELECT tipo_scadenza_default FROM associazioni WHERE id = ? LIMIT 1");
                     $stmtCfg->execute([$associazione_id]);
                     $tipo_scadenza = $stmtCfg->fetchColumn() ?: 'solare';
-                    // Calcola numero tessera progressivo per anno
-                    $stmtCount = $pdo->prepare("SELECT COUNT(*) as cnt FROM tessere WHERE associazione_id = ? AND anno_validita = ?");
-                    $stmtCount->execute([$associazione_id, $anno_corrente]);
-                    $count = (int)($stmtCount->fetch()['cnt'] ?? 0) + 1;
-                    $numero_tessera = $anno_corrente . str_pad((string)$count, 4, '0', STR_PAD_LEFT);
+                    // Calcola numero tessera progressivo per associazione
+                    $stmtCount = $pdo->prepare("SELECT MAX(CAST(numero_tessera AS UNSIGNED)) as max_num FROM tessere WHERE associazione_id = ?");
+                    $stmtCount->execute([$associazione_id]);
+                    $count = (int)($stmtCount->fetch()['max_num'] ?? 0) + 1;
+                    $numero_tessera = str_pad((string)$count, 4, '0', STR_PAD_LEFT);
                     $data_emissione = date('Y-m-d');
                     $data_scadenza = ($tipo_scadenza === 'annuale') ? date('Y-m-d', strtotime($data_emissione . ' +1 year')) : ($anno_corrente . '-12-31');
                     $stmtInsT = $pdo->prepare("INSERT INTO tessere (id, associazione_id, socio_id, numero_tessera, anno_validita, data_emissione, data_scadenza, stato, tipo_scadenza) VALUES (?, ?, ?, ?, ?, ?, ?, 'Attiva', ?)");
                     $new_tessera_id = generateUuid();
                     $stmtInsT->execute([$new_tessera_id, $associazione_id, $socio_id, $numero_tessera, $anno_corrente, $data_emissione, $data_scadenza, $tipo_scadenza]);
+
+                    // Genera QR code URL per la tessera
+                    require_once __DIR__ . '/../includes/qrcode_helper.php';
+                    $qr_url = buildTesseraVerificationUrl($new_tessera_id);
+                    $pdo->prepare("UPDATE tessere SET qr_code_url = ? WHERE id = ?")->execute([$qr_url, $new_tessera_id]);
 
                     // Genera e salva automaticamente il PDF tessera in uploads/documents
                     try {
@@ -722,9 +727,9 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === '1') {
 <div class="d-flex justify-content-between mb-3 align-items-start flex-wrap gap-2">
     <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#socioModal"><i class="bi bi-plus-lg"></i> Nuovo Socio</button>
     <div class="ms-auto d-flex flex-column align-items-end gap-2">
-        <form method="GET" class="d-flex align-items-center gap-2">
+        <form method="GET" class="d-flex align-items-center gap-2 flex-wrap">
             <input type="hidden" name="page" value="soci">
-            <select class="form-select form-select-sm" id="presetSelect" name="preset_id" style="min-width:180px;">
+            <select class="form-select form-select-sm" id="presetSelect" name="preset_id" style="min-width:140px;flex:1 1 auto;">
                 <option value="">Preset filtri...</option>
                 <?php foreach ($presets as $pr): ?>
                     <option value="<?php echo htmlspecialchars($pr['id']); ?>" <?php echo (($_GET['preset_id'] ?? '') === $pr['id']) ? 'selected' : ''; ?>><?php echo htmlspecialchars($pr['name']); ?></option>
@@ -733,7 +738,7 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === '1') {
             <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-folder2-open me-1"></i>Carica</button>
             <button type="button" class="btn btn-sm btn-outline-danger" onclick="deletePreset()" title="Elimina preset"><i class="bi bi-trash"></i></button>
         </form>
-        <form id="savePresetInlineForm" method="POST" class="d-flex align-items-center gap-2">
+        <form id="savePresetInlineForm" method="POST" class="d-flex align-items-center gap-2 flex-wrap">
             <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
             <input type="hidden" name="save_filter_preset" value="1">
             <input type="hidden" name="search" value="<?php echo htmlspecialchars($searchTerm); ?>">
@@ -747,7 +752,7 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === '1') {
             <input type="hidden" name="has_tessera" value="<?php echo htmlspecialchars($has_tessera_filter); ?>">
             <input type="hidden" name="tessera_stato" value="<?php echo htmlspecialchars($tessera_stato_filter); ?>">
             <input type="hidden" name="gruppo_id" value="<?php echo htmlspecialchars($gruppo_id_filter); ?>">
-            <input type="text" name="preset_name" class="form-control form-control-sm" placeholder="Nome preset" required style="min-width:140px;">
+            <input type="text" name="preset_name" class="form-control form-control-sm" placeholder="Nome preset" required style="min-width:100px;flex:1 1 auto;">
             <button type="submit" class="btn btn-sm btn-outline-primary"><i class="bi bi-bookmark-plus me-1"></i>Salva</button>
         </form>
     </div>
@@ -1246,7 +1251,8 @@ function deletePreset(){
                      <?php if ($editingSocio): ?>
                          <input type="text" name="numero_socio" class="form-control" value="<?php echo htmlspecialchars($editingSocio['numero_socio'] ?? ''); ?>" required>
                      <?php else: ?>
-                         <input type="text" name="numero_socio" class="form-control" value="" placeholder="Verrà assegnato automaticamente" readonly>
+                         <input type="text" class="form-control" value="" placeholder="Verrà assegnato automaticamente" disabled>
+                         <input type="hidden" name="numero_socio" value="">
                          <div class="form-text">Il numero socio verrà assegnato automaticamente in base all'ultimo numero registrato</div>
                      <?php endif; ?>
                  </div>

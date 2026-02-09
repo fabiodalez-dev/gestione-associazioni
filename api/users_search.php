@@ -25,10 +25,8 @@ $where = ["(username LIKE ? OR email LIKE ?)"];
 $params = [];
 $term = "%$q%";
 $params[] = $term; $params[] = $term;
-if ($onlyAdmin) { $where[] = "role IN ('admin_associazione','super_admin')"; } // includi super_admin solo per evidenziare esclusione
+if ($onlyAdmin) { $where[] = "role IN ('admin_associazione','super_admin')"; }
 if (!$includeExcluded) {
-    // Filtra risultati server-side
-    $where[] = "role <> 'super_admin'";
     if ($onlyAvailable) { $where[] = "(associazione_id IS NULL OR associazione_id = '')"; }
 }
 $sql = "SELECT id, username, email, role, associazione_id FROM users WHERE " . implode(' AND ', $where) . " ORDER BY role DESC, username LIMIT 20";
@@ -39,8 +37,7 @@ $stmt->execute($params);
         $items = [];
         foreach ($rows as $u) {
             $excluded = false; $reason = null;
-            if ($u['role'] === 'super_admin') { $excluded = true; $reason = 'super_admin'; }
-            if (!$excluded && $onlyAvailable && !empty($u['associazione_id'])) { $excluded = true; $reason = 'linked'; }
+            if ($onlyAvailable && !empty($u['associazione_id'])) { $excluded = true; $reason = 'linked'; }
             $u['excluded'] = $excluded;
             $u['reason'] = $reason;
             $items[] = $u;

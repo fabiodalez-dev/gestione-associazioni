@@ -88,8 +88,8 @@ $gruppi = $stmt_gruppi->fetchAll();
                     <td><strong><?php echo htmlspecialchars($gruppo['nome_gruppo']); ?></strong></td>
                     <td><small class="font-monospace"><?php echo htmlspecialchars($gruppo['filtri_json']); ?></small></td>
                     <td class="text-end">
-                        <a href="index.php?page=config_gruppi&edit=<?php echo $gruppo['id']; ?>" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil"></i></a>
-                        <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questo gruppo?')"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="delete_id" value="<?php echo $gruppo['id']; ?>"><button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button></form>
+                        <a href="index.php?page=config_gruppi&edit=<?php echo htmlspecialchars($gruppo['id'], ENT_QUOTES); ?>" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil"></i></a>
+                        <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questo gruppo?')"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="delete_id" value="<?php echo htmlspecialchars($gruppo['id'], ENT_QUOTES); ?>"><button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button></form>
                     </td>
                 </tr>
             <?php endforeach; ?>
@@ -105,7 +105,7 @@ $gruppi = $stmt_gruppi->fetchAll();
     <form method="POST">
         <div class="modal-body">
             <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
-            <input type="hidden" name="id" value="<?php echo $editingGroup['id'] ?? ''; ?>">
+            <input type="hidden" name="id" value="<?php echo htmlspecialchars($editingGroup['id'] ?? '', ENT_QUOTES); ?>">
             <div class="mb-3"><label>Nome Gruppo</label><input type="text" name="nome_gruppo" class="form-control" value="<?php echo htmlspecialchars($editingGroup['nome_gruppo'] ?? ''); ?>" required></div>
             <div class="mb-3"><label>Descrizione</label><textarea name="descrizione" class="form-control"><?php echo htmlspecialchars($editingGroup['descrizione'] ?? ''); ?></textarea></div>
             <hr><p class="text-muted">Imposta Filtri:</p>

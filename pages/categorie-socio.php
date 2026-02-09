@@ -87,8 +87,8 @@ if ($associazione_id) {
                         echo htmlspecialchars($desc, ENT_NOQUOTES | ENT_HTML5, 'UTF-8');
                     ?></td>
                     <td class="text-end">
-                        <a href="index.php?page=categorie-socio&edit=<?php echo $cat['id']; ?>" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil"></i></a>
-                        <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questa categoria?')"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="delete_id" value="<?php echo $cat['id']; ?>"><button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button></form>
+                        <a href="index.php?page=categorie-socio&edit=<?php echo htmlspecialchars($cat['id'], ENT_QUOTES); ?>" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil"></i></a>
+                        <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questa categoria?')"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="delete_id" value="<?php echo htmlspecialchars($cat['id'], ENT_QUOTES); ?>"><button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button></form>
                     </td>
                 </tr>
             <?php endforeach; ?>
@@ -104,7 +104,7 @@ if ($associazione_id) {
     <form method="POST">
         <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
         <div class="modal-body">
-            <input type="hidden" name="id" value="<?php echo $editingCategory['id'] ?? ''; ?>">
+            <input type="hidden" name="id" value="<?php echo htmlspecialchars($editingCategory['id'] ?? '', ENT_QUOTES); ?>">
             <div class="mb-3"><label>Nome</label><input type="text" name="nome" class="form-control" value="<?php echo escapeOutput($editingCategory['nome'] ?? ''); ?>" required></div>
             <div class="mb-3"><label>Descrizione</label><textarea name="descrizione" class="form-control" rows="3"><?php 
                 $ed = $editingCategory['descrizione'] ?? '';

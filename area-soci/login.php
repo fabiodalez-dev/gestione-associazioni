@@ -95,20 +95,23 @@ if (isset($_POST['action']) && $_POST['action'] == 'reset_password') {
         .form-label { font-size: 0.8125rem; font-weight: 500; color: #4B5563; margin-bottom: 0.375rem; }
         .form-control {
             border: 1px solid #D1D5DB; border-radius: 6px;
-            padding: 0.5rem 0.75rem; font-size: 0.875rem; color: #111827;
+            padding: 0.5rem 0.75rem; font-size: 16px; color: #111827;
             transition: border-color 150ms, box-shadow 150ms;
+            min-height: 44px;
         }
         .form-control:focus { border-color: #FF7B11; box-shadow: 0 0 0 3px rgba(255,123,17,0.15); outline: none; }
         .btn-login {
             width: 100%; background: #FF7B11; border: none; color: #FFFFFF;
             font-weight: 600; font-size: 0.875rem; padding: 0.625rem 1rem;
             border-radius: 6px; cursor: pointer; transition: background 150ms;
+            min-height: 44px;
         }
         .btn-login:hover { background: #E86A00; }
         .btn-secondary-custom {
             width: 100%; background: #F3F4F6; border: 1px solid #D1D5DB; color: #4B5563;
             font-weight: 500; font-size: 0.875rem; padding: 0.625rem 1rem;
             border-radius: 6px; cursor: pointer; transition: all 150ms;
+            min-height: 44px;
         }
         .btn-secondary-custom:hover { background: #E5E7EB; border-color: #9CA3AF; }
         .nav-tabs { border-bottom: 1px solid #E5E7EB; margin-bottom: 1.5rem; }

@@ -86,8 +86,8 @@ $tags = $stmt_tags->fetchAll();
                     <td><span class="badge" style="background-color: <?php echo htmlspecialchars($tag['colore']); ?>; color: white;"><?php echo htmlspecialchars($tag['nome_tag']); ?></span></td>
                     <td><strong><?php echo htmlspecialchars($tag['nome_tag']); ?></strong></td>
                     <td class="text-end">
-                        <a href="index.php?page=config_tags&edit=<?php echo $tag['id']; ?>" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil"></i></a>
-                        <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questo tag?')"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="delete_id" value="<?php echo $tag['id']; ?>"><button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button></form>
+                        <a href="index.php?page=config_tags&edit=<?php echo htmlspecialchars($tag['id'], ENT_QUOTES); ?>" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil"></i></a>
+                        <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questo tag?')"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="delete_id" value="<?php echo htmlspecialchars($tag['id'], ENT_QUOTES); ?>"><button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button></form>
                     </td>
                 </tr>
             <?php endforeach; ?>
@@ -103,7 +103,7 @@ $tags = $stmt_tags->fetchAll();
     <form method="POST">
         <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
         <div class="modal-body">
-            <input type="hidden" name="id" value="<?php echo $editingTag['id'] ?? ''; ?>">
+            <input type="hidden" name="id" value="<?php echo htmlspecialchars($editingTag['id'] ?? '', ENT_QUOTES); ?>">
             <div class="mb-3"><label>Nome Tag</label><input type="text" name="nome_tag" class="form-control" value="<?php echo htmlspecialchars($editingTag['nome_tag'] ?? ''); ?>" required></div>
             <div class="mb-3"><label>Colore</label><input type="color" name="colore" class="form-control form-control-color" value="<?php echo htmlspecialchars($editingTag['colore'] ?? '#888888'); ?>" required></div>
         </div>

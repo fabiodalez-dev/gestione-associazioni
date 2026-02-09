@@ -4,7 +4,15 @@
  * Questo script permette di resettare le credenziali degli utenti
  *
  * IMPORTANTE: Eliminare questo file dopo l'uso per motivi di sicurezza!
+ * Accessibile SOLO da CLI per motivi di sicurezza.
  */
+
+// Block web access — CLI only
+if (php_sapi_name() !== 'cli') {
+    http_response_code(403);
+    echo 'Accesso negato. Questo script è utilizzabile solo da linea di comando.';
+    exit(1);
+}
 
 // Includi la configurazione
 require_once 'config.php';
@@ -135,8 +143,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <h1 class="mb-4"><i class="bi bi-shield-lock"></i> Reset Credenziali</h1>
 
         <?php if ($message): ?>
-            <div class="alert alert-<?php echo $messageType; ?> alert-dismissible fade show" role="alert">
-                <?php echo $message; ?>
+            <div class="alert alert-<?php echo htmlspecialchars($messageType); ?> alert-dismissible fade show" role="alert">
+                <?php echo $message; // Contains intentional HTML (<br> tags) ?>
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
             </div>
         <?php endif; ?>

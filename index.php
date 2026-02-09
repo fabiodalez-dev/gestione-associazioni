@@ -46,6 +46,8 @@ $allowed_pages = [
     'email-coda' => 'pages/email_coda.php',
     'email-log' => 'pages/email_log.php',
     // Pagine API e azioni
+    'api-keys' => 'pages/api_keys.php',
+    'api-docs' => 'pages/api_docs.php',
     'export' => 'api/export.php',
 ];
 
@@ -88,6 +90,11 @@ if (in_array($page_key, $raw_pages, true)) {
     <link href="assets/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
     <link href="assets/vendor/bootstrap-icons/font/bootstrap-icons.min.css" rel="stylesheet">
     <link href="assets/css/style.css" rel="stylesheet">
+    <meta name="theme-color" content="#FF7B11">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="assets/icons/icon-192.png">
 </head>
 <body>
     <!-- Mobile Header (only visible on mobile when user is logged in) -->
@@ -128,6 +135,11 @@ if (in_array($page_key, $raw_pages, true)) {
 
     <script src="assets/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
     <script src="assets/js/main.js"></script>
+    <script>
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('./service-worker.js').catch(function() {});
+    }
+    </script>
 </body>
 </html>
 <?php

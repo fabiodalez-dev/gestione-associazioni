@@ -52,14 +52,15 @@ if (isset($_GET['edit'])) {
 }
 
 $searchTerm = $_GET['search'] ?? '';
-$sql = "SELECT * FROM eventi WHERE associazione_id = ?";
+$sql = "SELECT e.*, (SELECT COUNT(*) FROM tessere WHERE evento_creazione_id = e.id) AS tessere_create
+        FROM eventi e WHERE e.associazione_id = ?";
 $params = [$associazione_id];
 if (!empty($searchTerm)) {
-    $sql .= " AND (titolo LIKE ? OR descrizione LIKE ? OR luogo LIKE ?)";
+    $sql .= " AND (e.titolo LIKE ? OR e.descrizione LIKE ? OR e.luogo LIKE ?)";
     $searchTermWild = "%$searchTerm%";
     array_push($params, $searchTermWild, $searchTermWild, $searchTermWild);
 }
-$sql .= " ORDER BY data_evento DESC";
+$sql .= " ORDER BY e.data_evento DESC";
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $events = $stmt->fetchAll();
@@ -80,13 +81,14 @@ $events = $stmt->fetchAll();
 
 <div class="responsive-table-wrapper">
     <table class="table-desktop">
-        <thead><tr><th>Evento</th><th>Data e Ora</th><th>Luogo</th><th class="text-end">Azioni</th></tr></thead>
+        <thead><tr><th>Evento</th><th>Data e Ora</th><th>Luogo</th><th>Tessere create</th><th class="text-end">Azioni</th></tr></thead>
         <tbody>
         <?php foreach ($events as $event): ?>
             <tr>
                 <td><strong><?php echo htmlspecialchars($event['titolo']); ?></strong></td>
                 <td><?php echo date('d/m/Y H:i', strtotime($event['data_evento'])); ?></td>
                 <td><?php echo htmlspecialchars($event['luogo']); ?></td>
+                <td><?php if ((int)$event['tessere_create'] > 0): ?><span class="badge bg-info text-dark"><?php echo (int)$event['tessere_create']; ?></span><?php else: ?><span class="text-muted">0</span><?php endif; ?></td>
                 <td class="text-end">
                     <a href="index.php?page=partecipanti&evento_id=<?php echo $event['id']; ?>" class="btn btn-sm btn-outline-info"><i class="bi bi-people"></i></a>
                     <a href="index.php?page=eventi&edit=<?php echo $event['id']; ?>" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil"></i></a>
@@ -108,6 +110,9 @@ $events = $stmt->fetchAll();
             </div>
             <div class="card-content">
                 <div class="card-field"><span class="field-label">Luogo</span><span class="field-value"><?php echo htmlspecialchars($event['luogo']); ?></span></div>
+                <?php if ((int)$event['tessere_create'] > 0): ?>
+                <div class="card-field"><span class="field-label">Tessere create</span><span class="field-value"><span class="badge bg-info text-dark"><?php echo (int)$event['tessere_create']; ?></span></span></div>
+                <?php endif; ?>
             </div>
             <div class="card-actions">
                 <a href="index.php?page=partecipanti&evento_id=<?php echo $event['id']; ?>" class="btn btn-sm btn-outline-info"><i class="bi bi-people me-1"></i>Partecipanti</a>

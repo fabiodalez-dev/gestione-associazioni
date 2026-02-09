@@ -35,9 +35,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$error && $socio) {
     }
 }
 ?>
-<!DOCTYPE html><html lang="it"><head><title>Imposta Password</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet"></head><body>
-<div class="container d-flex justify-content-center align-items-center vh-100">
-    <div class="card shadow" style="width: 450px;">
+<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="theme-color" content="#FF7B11"><title>Imposta Password</title><link href="../assets/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet"><style>.form-control{font-size:16px;min-height:44px}.btn{min-height:44px}</style></head><body>
+<div class="container d-flex justify-content-center align-items-center vh-100 px-3">
+    <div class="card shadow" style="max-width: 450px; width: 100%;">
         <div class="card-body p-5">
             <h3 class="card-title text-center mb-4">Imposta la tua Password</h3>
             <?php if($error): ?><div class="alert alert-danger"><?php echo htmlspecialchars($error); ?></div><?php endif; ?>

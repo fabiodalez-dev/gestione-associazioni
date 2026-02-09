@@ -34,6 +34,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     } elseif (isset($_POST['generate_all'])) {
         $currentYear = $_POST['anno_validita'] ?? date('Y');
+        $bulk_evento_id = !empty($_POST['evento_creazione_id']) ? $_POST['evento_creazione_id'] : null;
         $pdo->beginTransaction();
         try {
             $stmt = $pdo->prepare("SELECT id FROM soci WHERE stato = 'Attivo' AND associazione_id = ? AND id NOT IN (SELECT socio_id FROM tessere WHERE anno_validita = ? AND associazione_id = ?)");
@@ -50,8 +51,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $data_emissione = date('Y-m-d');
                 $data_scadenza = ($tipo_scadenza_default === 'solare') ? $currentYear . '-12-31' : date('Y-m-d', strtotime('+1 year'));
 
-                $insert_stmt = $pdo->prepare("INSERT INTO tessere (id, associazione_id, socio_id, numero_tessera, anno_validita, data_emissione, data_scadenza, tipo_scadenza) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-                $insert_stmt->execute([generateUuid(), $associazione_id, $socio_id, $numero_tessera, $currentYear, $data_emissione, $data_scadenza, $tipo_scadenza_default]);
+                $insert_stmt = $pdo->prepare("INSERT INTO tessere (id, associazione_id, socio_id, numero_tessera, anno_validita, data_emissione, data_scadenza, tipo_scadenza, evento_creazione_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                $insert_stmt->execute([generateUuid(), $associazione_id, $socio_id, $numero_tessera, $currentYear, $data_emissione, $data_scadenza, $tipo_scadenza_default, $bulk_evento_id]);
                 $generated_count++;
             }
             $pdo->commit();
@@ -90,14 +91,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
+        $evento_creazione_id = !empty($_POST['evento_creazione_id']) ? $_POST['evento_creazione_id'] : null;
+
         if ($id) {
-            $stmt = $pdo->prepare("UPDATE tessere SET socio_id=?, numero_tessera=?, anno_validita=?, data_emissione=?, data_scadenza=?, stato=?, tipo_scadenza=? WHERE id=? AND associazione_id=?");
-            $stmt->execute([$socio_id, $numero_tessera, $anno_validita, $data_emissione, $data_scadenza, $stato, $tipo_scadenza, $id, ($associazione_id)]);
+            $stmt = $pdo->prepare("UPDATE tessere SET socio_id=?, numero_tessera=?, anno_validita=?, data_emissione=?, data_scadenza=?, stato=?, tipo_scadenza=?, evento_creazione_id=? WHERE id=? AND associazione_id=?");
+            $stmt->execute([$socio_id, $numero_tessera, $anno_validita, $data_emissione, $data_scadenza, $stato, $tipo_scadenza, $evento_creazione_id, $id, ($associazione_id)]);
             $message = "Tessera aggiornata.";
         } else {
             $new_id = generateUuid();
-            $stmt = $pdo->prepare("INSERT INTO tessere (id, associazione_id, socio_id, numero_tessera, anno_validita, data_emissione, data_scadenza, stato, tipo_scadenza) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-            $stmt->execute([$new_id, ($associazione_id), $socio_id, $numero_tessera, $anno_validita, $data_emissione, $data_scadenza, $stato, $tipo_scadenza]);
+            $stmt = $pdo->prepare("INSERT INTO tessere (id, associazione_id, socio_id, numero_tessera, anno_validita, data_emissione, data_scadenza, stato, tipo_scadenza, evento_creazione_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->execute([$new_id, ($associazione_id), $socio_id, $numero_tessera, $anno_validita, $data_emissione, $data_scadenza, $stato, $tipo_scadenza, $evento_creazione_id]);
             $message = "Tessera creata.";
 
             // Best-effort: queue rinnovo_tessera email
@@ -156,6 +159,11 @@ $stmt_soci = $pdo->prepare("SELECT id, CONCAT(cognome, ' ', nome) as nome_comple
 $stmt_soci->execute([$associazione_id]);
 $soci_attivi = $stmt_soci->fetchAll();
 
+// Carica eventi per dropdown evento_creazione
+$stmt_eventi = $pdo->prepare("SELECT id, titolo, data_evento FROM eventi WHERE associazione_id = ? ORDER BY data_evento DESC");
+$stmt_eventi->execute([$associazione_id]);
+$eventi_disponibili = $stmt_eventi->fetchAll();
+
 $q = trim($_GET['q'] ?? '');
 $status = $_GET['status'] ?? 'all';
 $anno_filter = $_GET['anno'] ?? date('Y');
@@ -170,11 +178,13 @@ if ($stato_filter !== 'all') {
     $status = $stato_filter;
 }
 
-$sql = "SELECT t.*, s.nome, s.cognome, s.numero_socio, a.nome AS associazione_nome, ts.nome AS tipo_socio
+$sql = "SELECT t.*, s.nome, s.cognome, s.numero_socio, a.nome AS associazione_nome, ts.nome AS tipo_socio,
+               ev.titolo AS evento_titolo
         FROM tessere t
         JOIN soci s ON t.socio_id = s.id
         LEFT JOIN associazioni a ON a.id = t.associazione_id
         LEFT JOIN tipi_socio ts ON s.tipo_socio_id = ts.id
+        LEFT JOIN eventi ev ON t.evento_creazione_id = ev.id
         WHERE 1=1";
 $params = [];
 
@@ -231,6 +241,7 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === '1') {
                 <th>Anno</th>
                 <th>Scadenza</th>
                 <th>Stato</th>
+                <th>Evento</th>
                 <th class="text-end">Azioni</th>
             </tr>
         </thead>
@@ -267,6 +278,7 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === '1') {
                     <?php else: ?><span class="text-muted">—</span><?php endif; ?>
                 </td>
                 <td><span class="badge bg-<?php echo $badge_class; ?>"><?php echo htmlspecialchars($status); ?></span></td>
+                <td><?php if (!empty($t['evento_titolo'])): ?><span class="badge bg-info text-dark"><?php echo htmlspecialchars($t['evento_titolo']); ?></span><?php else: ?><span class="text-muted">—</span><?php endif; ?></td>
                 <td class="text-end">
                     <a href="index.php?page=genera-tessera-pdf&tessera_id=<?php echo $t['id']; ?>" class="btn btn-sm btn-outline-success" title="Genera PDF" target="_blank"><i class="bi bi-file-pdf"></i></a>
                     <a href="index.php?page=tessere&edit=<?php echo $t['id']; ?>" class="btn btn-sm btn-outline-primary" title="Modifica"><i class="bi bi-pencil"></i></a>
@@ -301,6 +313,9 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === '1') {
                 <div class="card-field"><span class="field-label">N. Tessera</span><span class="field-value font-monospace"><?php echo htmlspecialchars($t['numero_tessera']); ?></span></div>
                 <div class="card-field"><span class="field-label">Anno</span><span class="field-value"><?php echo htmlspecialchars($t['anno_validita']); ?></span></div>
                 <div class="card-field"><span class="field-label">Scadenza</span><span class="field-value"><?php echo !empty($t['data_scadenza']) ? date('d/m/Y', strtotime($t['data_scadenza'])) : '—'; ?></span></div>
+                <?php if (!empty($t['evento_titolo'])): ?>
+                <div class="card-field"><span class="field-label">Evento</span><span class="field-value"><span class="badge bg-info text-dark"><?php echo htmlspecialchars($t['evento_titolo']); ?></span></span></div>
+                <?php endif; ?>
             </div>
             <div class="card-actions">
                 <a href="index.php?page=genera-tessera-pdf&tessera_id=<?php echo $t['id']; ?>" class="btn btn-sm btn-outline-success" target="_blank"><i class="bi bi-file-pdf me-1"></i>PDF</a>
@@ -433,11 +448,7 @@ $chart_revenue = array_map(fn($r)=> (int)round((float)$r['ricavi']), $agg_rows);
 <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
     <div class="d-flex gap-2">
             <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#tesseraModal"><i class="bi bi-plus-lg"></i> Nuova Tessera</button>
-            <form method="POST" onsubmit="return confirm('Generare tessere per i soci attivi senza tessera per l\'anno <?php echo date('Y'); ?>?')">
-                <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
-                <input type="hidden" name="anno_validita" value="<?php echo date('Y'); ?>">
-                <button type="submit" name="generate_all" class="btn btn-outline-success"><i class="bi bi-magic"></i> Genera Tessere <?php echo date('Y'); ?></button>
-            </form>
+            <button class="btn btn-outline-success" data-bs-toggle="modal" data-bs-target="#bulkGenerateModal"><i class="bi bi-magic"></i> Genera Tessere <?php echo date('Y'); ?></button>
     </div>
 </div>
 
@@ -453,6 +464,7 @@ $chart_revenue = array_map(fn($r)=> (int)round((float)$r['ricavi']), $agg_rows);
                 <th>Anno</th>
                 <th>Scadenza</th>
                 <th>Stato</th>
+                <th>Evento</th>
                 <th class="text-end">Azioni</th>
             </tr>
         </thead>
@@ -506,6 +518,7 @@ $chart_revenue = array_map(fn($r)=> (int)round((float)$r['ricavi']), $agg_rows);
                     <?php endif; ?>
                 </td>
                 <td><span class="badge bg-<?php echo $badge_class; ?>"><?php echo htmlspecialchars($status); ?></span></td>
+                <td><?php if (!empty($t['evento_titolo'])): ?><span class="badge bg-info text-dark"><?php echo htmlspecialchars($t['evento_titolo']); ?></span><?php else: ?><span class="text-muted">—</span><?php endif; ?></td>
                 <td class="text-end">
                     <a href="index.php?page=genera-tessera-pdf&tessera_id=<?php echo $t['id']; ?>" class="btn btn-sm btn-outline-success" title="Genera PDF" target="_blank"><i class="bi bi-file-pdf"></i></a>
                     <a href="index.php?page=tessere&edit=<?php echo $t['id']; ?>" class="btn btn-sm btn-outline-primary" title="Modifica"><i class="bi bi-pencil"></i></a>
@@ -557,6 +570,9 @@ $chart_revenue = array_map(fn($r)=> (int)round((float)$r['ricavi']), $agg_rows);
                 <div class="card-field"><span class="field-label">Tipo</span><span class="field-value"><?php echo htmlspecialchars($t['template_tessera']); ?></span></div>
                 <?php endif; ?>
                 <div class="card-field"><span class="field-label">Scadenza</span><span class="field-value"><?php echo !empty($t['data_scadenza']) ? date('d/m/Y', strtotime($t['data_scadenza'])) : '—'; ?></span></div>
+                <?php if (!empty($t['evento_titolo'])): ?>
+                <div class="card-field"><span class="field-label">Evento</span><span class="field-value"><span class="badge bg-info text-dark"><?php echo htmlspecialchars($t['evento_titolo']); ?></span></span></div>
+                <?php endif; ?>
                 <?php if (!empty($t['associazione_nome'])): ?>
                 <div class="card-field"><span class="field-label">Associazione</span><span class="field-value"><span class="badge bg-secondary"><?php echo htmlspecialchars($t['associazione_nome']); ?></span></span></div>
                 <?php endif; ?>
@@ -699,10 +715,48 @@ $chart_revenue = array_map(fn($r)=> (int)round((float)$r['ricavi']), $agg_rows);
                 <option value="Sospesa" <?php echo ($editingTessera['stato'] ?? '') === 'Sospesa' ? 'selected' : ''; ?>>Sospesa</option>
                 <option value="Annullata" <?php echo ($editingTessera['stato'] ?? '') === 'Annullata' ? 'selected' : ''; ?>>Annullata</option>
             </select></div>
+            <div class="mb-3">
+                <label>Evento di creazione <small class="text-muted">(opzionale)</small></label>
+                <select name="evento_creazione_id" class="form-select">
+                    <option value="">— Nessun evento —</option>
+                    <?php foreach ($eventi_disponibili as $ev): ?>
+                    <option value="<?php echo $ev['id']; ?>" <?php echo ($editingTessera['evento_creazione_id'] ?? '') === $ev['id'] ? 'selected' : ''; ?>><?php echo htmlspecialchars($ev['titolo'] . ' (' . date('d/m/Y', strtotime($ev['data_evento'])) . ')'); ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
         </div>
         <div class="modal-footer">
             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button>
             <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg me-1"></i>Salva</button>
+        </div>
+    </form>
+</div>
+</div>
+</div>
+
+<!-- Bulk Generate Modal -->
+<div class="modal fade" id="bulkGenerateModal" tabindex="-1">
+<div class="modal-dialog">
+<div class="modal-content">
+    <div class="modal-header"><h5 class="modal-title">Genera Tessere <?php echo date('Y'); ?></h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <form method="POST" onsubmit="return confirm('Generare tessere per i soci attivi senza tessera?')">
+        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
+        <input type="hidden" name="anno_validita" value="<?php echo date('Y'); ?>">
+        <div class="modal-body">
+            <p>Verranno generate tessere per tutti i soci attivi che non hanno ancora una tessera per l'anno <?php echo date('Y'); ?>.</p>
+            <div class="mb-3">
+                <label>Evento associato <small class="text-muted">(opzionale)</small></label>
+                <select name="evento_creazione_id" class="form-select">
+                    <option value="">— Nessun evento —</option>
+                    <?php foreach ($eventi_disponibili as $ev): ?>
+                    <option value="<?php echo $ev['id']; ?>"><?php echo htmlspecialchars($ev['titolo'] . ' (' . date('d/m/Y', strtotime($ev['data_evento'])) . ')'); ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button>
+            <button type="submit" name="generate_all" class="btn btn-success"><i class="bi bi-magic me-1"></i>Genera Tessere</button>
         </div>
     </form>
 </div>

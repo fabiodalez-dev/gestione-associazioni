@@ -373,3 +373,84 @@ function formatCurrency(amount) {
 function formatDate(dateString) {
     return new Date(dateString).toLocaleDateString('it-IT');
 }
+
+// PWA Install Prompt Handler
+(function() {
+    var deferredPrompt = null;
+
+    window.addEventListener('beforeinstallprompt', function(e) {
+        e.preventDefault();
+        deferredPrompt = e;
+
+        // Don't show if user already dismissed
+        if (localStorage.getItem('pwa_install_dismissed')) return;
+
+        showInstallToast();
+    });
+
+    function showInstallToast() {
+        // Build install toast via DOM methods
+        var container = document.querySelector('.toast-container');
+        if (!container) {
+            container = document.createElement('div');
+            container.className = 'toast-container';
+            document.body.appendChild(container);
+        }
+
+        var toast = document.createElement('div');
+        toast.className = 'toast toast-info';
+        toast.setAttribute('role', 'alert');
+
+        var body = document.createElement('div');
+        body.className = 'toast-body';
+
+        var flex = document.createElement('div');
+        flex.className = 'd-flex align-items-center gap-2';
+
+        var icon = document.createElement('i');
+        icon.className = 'bi bi-download';
+        icon.style.fontSize = '1.25rem';
+        icon.style.color = '#FF7B11';
+
+        var text = document.createElement('span');
+        text.className = 'flex-grow-1';
+        text.textContent = 'Installa l\'app per un accesso rapido';
+
+        var btnInstall = document.createElement('button');
+        btnInstall.className = 'btn btn-sm btn-primary';
+        btnInstall.textContent = 'Installa';
+        btnInstall.style.whiteSpace = 'nowrap';
+
+        var btnDismiss = document.createElement('button');
+        btnDismiss.className = 'btn btn-sm btn-outline-secondary';
+        btnDismiss.textContent = 'No';
+
+        flex.appendChild(icon);
+        flex.appendChild(text);
+        flex.appendChild(btnInstall);
+        flex.appendChild(btnDismiss);
+        body.appendChild(flex);
+        toast.appendChild(body);
+        container.appendChild(toast);
+
+        btnInstall.addEventListener('click', function() {
+            if (deferredPrompt) {
+                deferredPrompt.prompt();
+                deferredPrompt.userChoice.then(function() {
+                    deferredPrompt = null;
+                });
+            }
+            toast.remove();
+        });
+
+        btnDismiss.addEventListener('click', function() {
+            localStorage.setItem('pwa_install_dismissed', '1');
+            toast.remove();
+        });
+
+        // Auto-dismiss after 15 seconds
+        setTimeout(function() {
+            if (toast.parentNode) toast.remove();
+        }, 15000);
+    }
+})();

@@ -5,6 +5,13 @@ if (!isUserLoggedIn() || !isset($_SESSION['associazione_id'])) {
     redirect('auth/login.php');
 }
 
+// Load Composer autoload and QR helper
+$autoloadPath = __DIR__ . '/../vendor/autoload.php';
+if (file_exists($autoloadPath)) {
+    require_once $autoloadPath;
+}
+require_once __DIR__ . '/../includes/qrcode_helper.php';
+
 $associazione_id = $_SESSION['associazione_id'];
 $socio_id = $_GET['id'] ?? null;
 $message = '';
@@ -119,18 +126,33 @@ $storico = $stmt_storico->fetchAll();
     </div></div></div>
 
     <div class="tab-pane fade" id="quote-tessere" role="tabpanel">
-        <div class="card mt-3"><div class="card-header"><h5>Quote</h5></div><div class="card-body"><table class="table table-sm"><thead><tr><th>Anno</th><th>Importo</th><th>Stato</th><th>Data Pagamento</th></tr></thead><tbody>
+        <div class="card mt-3"><div class="card-header"><h5>Quote</h5></div><div class="card-body"><div class="table-responsive"><table class="table table-sm"><thead><tr><th>Anno</th><th>Importo</th><th>Stato</th><th>Data Pagamento</th></tr></thead><tbody>
         <?php foreach($quote as $q): ?><tr><td><?php echo $q['anno']; ?></td><td>€<?php echo $q['importo']; ?></td><td><?php echo $q['stato']; ?></td><td><?php echo $q['data_pagamento'] ? date('d/m/Y', strtotime($q['data_pagamento'])) : '-'; ?></td></tr><?php endforeach; ?>
-        </tbody></table></div></div>
-        <div class="card mt-3"><div class="card-header"><h5>Tessere</h5></div><div class="card-body"><table class="table table-sm"><thead><tr><th>Numero</th><th>Anno</th><th>Scadenza</th><th>Stato</th><th>Costo</th></tr></thead><tbody>
-        <?php 
+        </tbody></table></div></div></div>
+        <div class="card mt-3"><div class="card-header"><h5>Tessere</h5></div><div class="card-body"><div class="table-responsive"><table class="table table-sm"><thead><tr><th>Numero</th><th>Anno</th><th>Scadenza</th><th>Stato</th><th>Costo</th><th>QR</th></tr></thead><tbody>
+        <?php
         // Calcola il costo per ogni tessera: override del tipo socio o default associazione
         $stmt_cost = $pdo->prepare("SELECT ts.costo_tessera as tipo_costo, a.costo_tessera as assoc_costo FROM soci s LEFT JOIN tipi_socio ts ON s.tipo_socio_id = ts.id LEFT JOIN associazioni a ON s.associazione_id = a.id WHERE s.id = ? AND s.associazione_id = ? LIMIT 1");
         $stmt_cost->execute([$socio_id, $associazione_id]);
         $costRow = $stmt_cost->fetch() ?: [];
         $baseCost = isset($costRow['tipo_costo']) ? (float)$costRow['tipo_costo'] : (isset($costRow['assoc_costo']) ? (float)$costRow['assoc_costo'] : null);
-        foreach($tessere as $t): ?><tr><td><?php echo $t['numero_tessera']; ?></td><td><?php echo $t['anno_validita']; ?></td><td><?php echo date('d/m/Y', strtotime($t['data_scadenza'])); ?></td><td><?php echo $t['stato']; ?></td><td><?php echo $baseCost !== null ? '€ ' . number_format($baseCost, 2, ',', '.') : '—'; ?></td></tr><?php endforeach; ?>
-        </tbody></table></div></div>
+        $qr_modals = [];
+        foreach($tessere as $t):
+            $qr_uri = generateQrDataUri(buildTesseraVerificationUrl($t['id']), 3);
+            $qr_uri_lg = generateQrDataUri(buildTesseraVerificationUrl($t['id']), 6);
+            $qr_modals[] = ['id' => $t['id'], 'uri_lg' => $qr_uri_lg, 'numero' => $t['numero_tessera']];
+        ?><tr><td><?php echo htmlspecialchars($t['numero_tessera']); ?></td><td><?php echo htmlspecialchars($t['anno_validita']); ?></td><td><?php echo date('d/m/Y', strtotime($t['data_scadenza'])); ?></td><td><?php echo htmlspecialchars($t['stato']); ?></td><td><?php echo $baseCost !== null ? '€ ' . number_format($baseCost, 2, ',', '.') : '—'; ?></td><td><img src="<?php echo htmlspecialchars($qr_uri); ?>" alt="QR" style="width:36px;height:36px;cursor:pointer;" onclick="document.getElementById('qrModal<?php echo htmlspecialchars($t['id']); ?>').style.display='flex'"></td></tr>
+        <?php endforeach; ?>
+        </tbody></table></div></div></div>
+        <?php foreach($qr_modals as $qm): ?>
+        <div id="qrModal<?php echo htmlspecialchars($qm['id']); ?>" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:9999;align-items:center;justify-content:center;" onclick="this.style.display='none'">
+            <div style="background:#fff;border-radius:12px;padding:24px;text-align:center;max-width:90vw;" onclick="event.stopPropagation()">
+                <img src="<?php echo htmlspecialchars($qm['uri_lg']); ?>" alt="QR Code" style="width:200px;height:200px;max-width:70vw;max-height:70vw;">
+                <p class="mt-2 mb-0 text-muted small">Tessera <?php echo htmlspecialchars($qm['numero']); ?></p>
+                <button class="btn btn-sm btn-secondary mt-2" onclick="this.closest('[id^=qrModal]').style.display='none'">Chiudi</button>
+            </div>
+        </div>
+        <?php endforeach; ?>
     </div>
 
     <div class="tab-pane fade" id="documenti" role="tabpanel">
@@ -150,7 +172,7 @@ $storico = $stmt_storico->fetchAll();
         <div class="card mt-3">
             <div class="card-header"><h5>Documenti Caricati</h5></div>
             <div class="card-body">
-                <table class="table table-sm"><thead><tr><th>File</th><th>Descrizione</th><th>Scadenza</th><th>Caricato il</th><th>Azioni</th></tr></thead><tbody>
+                <div class="table-responsive"><table class="table table-sm"><thead><tr><th>File</th><th>Descrizione</th><th>Scadenza</th><th>Caricato il</th><th>Azioni</th></tr></thead><tbody>
             <?php foreach($documenti_socio as $doc): ?>
                 <tr>
                     <td><a href="#"><?php echo htmlspecialchars($doc['nome_file']); ?></a></td>
@@ -160,7 +182,7 @@ $storico = $stmt_storico->fetchAll();
                     <td><a href="#" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></a></td>
                 </tr>
             <?php endforeach; ?>
-            </tbody></table>
+            </tbody></table></div>
         </div></div>
     </div>
 
