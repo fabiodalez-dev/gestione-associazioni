@@ -549,7 +549,7 @@ CREATE TABLE IF NOT EXISTS email_log (
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS api_keys (
     id CHAR(36) PRIMARY KEY,
-    associazione_id CHAR(36) NOT NULL,
+    associazione_id CHAR(36) NULL,   -- NULL = chiave globale (tutte le associazioni)
     api_key VARCHAR(64) UNIQUE NOT NULL,
     nome VARCHAR(255) NOT NULL,
     permessi JSON NOT NULL,
@@ -560,7 +560,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_api_key (api_key),
     INDEX idx_api_assoc (associazione_id),
-    FOREIGN KEY (associazione_id) REFERENCES associazioni(id) ON DELETE CASCADE
+    FOREIGN KEY (associazione_id) REFERENCES associazioni(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================

@@ -7,9 +7,11 @@
  */
 
 /**
+ * @param ?string $associazioneId  null = global key
+ * @param ?string $filterAssocId   optional filter from ?associazione_id=
  * @param array $segments URL path segments after 'quote'
  */
-function handleQuote(PDO $pdo, array $apiKey, string $associazioneId, string $method, array $segments): void
+function handleQuote(PDO $pdo, array $apiKey, ?string $associazioneId, string $method, array $segments, ?string $filterAssocId = null): void
 {
     if ($method !== 'GET') {
         apiError('Metodo non supportato. Usa GET.', 405, 'method_not_allowed');
@@ -17,30 +19,52 @@ function handleQuote(PDO $pdo, array $apiKey, string $associazioneId, string $me
 
     apiRequirePermission($apiKey, 'quote:read');
 
+    $isGlobal = ($associazioneId === null);
+
     // GET /quote/{socio_id} - quote di un socio
     if (isset($segments[1]) && preg_match('/^[a-f0-9-]{36}$/i', $segments[1])) {
-        // Verify socio belongs to association
-        $checkStmt = $pdo->prepare("SELECT id, nome, cognome, numero_socio FROM soci WHERE id = ? AND associazione_id = ?");
-        $checkStmt->execute([$segments[1], $associazioneId]);
+        // Verify socio exists (and belongs to association if scoped)
+        $checkWhere = 'id = ?';
+        $checkParams = [$segments[1]];
+        if ($associazioneId !== null) {
+            $checkWhere .= ' AND associazione_id = ?';
+            $checkParams[] = $associazioneId;
+        }
+        $checkStmt = $pdo->prepare("SELECT id, nome, cognome, numero_socio, associazione_id FROM soci WHERE $checkWhere");
+        $checkStmt->execute($checkParams);
         $socio = $checkStmt->fetch();
 
         if (!$socio) {
             apiError('Socio non trovato.', 404, 'not_found');
         }
 
+        $quoteWhere = 'socio_id = ? AND associazione_id = ?';
+        $quoteParams = [$segments[1], $socio['associazione_id']];
+
         $stmt = $pdo->prepare("
             SELECT id, anno, importo, data_scadenza, data_pagamento, stato, tipo, note
             FROM quote
-            WHERE socio_id = ? AND associazione_id = ?
+            WHERE $quoteWhere
             ORDER BY anno DESC
         ");
-        $stmt->execute([$segments[1], $associazioneId]);
+        $stmt->execute($quoteParams);
 
-        apiResponse([
+        $response = [
             'success' => true,
-            'socio' => $socio,
+            'socio' => [
+                'id' => $socio['id'],
+                'nome' => $socio['nome'],
+                'cognome' => $socio['cognome'],
+                'numero_socio' => $socio['numero_socio'],
+            ],
             'quote' => $stmt->fetchAll(),
-        ]);
+        ];
+
+        if ($isGlobal) {
+            $response['socio']['associazione_id'] = $socio['associazione_id'];
+        }
+
+        apiResponse($response);
     }
 
     // GET /quote - list with filters
@@ -50,8 +74,9 @@ function handleQuote(PDO $pdo, array $apiKey, string $associazioneId, string $me
     $anno = $_GET['anno'] ?? null;
     $stato = $_GET['stato'] ?? null;
 
-    $where = ['q.associazione_id = ?'];
-    $params = [$associazioneId];
+    $assocFilter = apiAssociationFilter('q.associazione_id', $associazioneId, $filterAssocId);
+    $where = [$assocFilter['where']];
+    $params = $assocFilter['params'];
 
     if ($anno !== null && is_numeric($anno)) {
         $where[] = 'q.anno = ?';
@@ -68,13 +93,18 @@ function handleQuote(PDO $pdo, array $apiKey, string $associazioneId, string $me
     $countStmt->execute($params);
     $total = (int)$countStmt->fetchColumn();
 
+    $selectExtra = $isGlobal ? ', a.nome as associazione_nome, q.associazione_id' : '';
+    $joinExtra = $isGlobal ? 'JOIN associazioni a ON q.associazione_id = a.id' : '';
+
     $params[] = $limit;
     $params[] = $offset;
     $stmt = $pdo->prepare("
         SELECT q.id, q.anno, q.importo, q.data_scadenza, q.data_pagamento, q.stato, q.tipo,
                s.nome as socio_nome, s.cognome as socio_cognome, s.numero_socio
+               $selectExtra
         FROM quote q
         JOIN soci s ON q.socio_id = s.id
+        $joinExtra
         WHERE $whereClause
         ORDER BY q.anno DESC, s.cognome, s.nome
         LIMIT ? OFFSET ?

@@ -8,10 +8,14 @@
  */
 
 /**
+ * @param ?string $associazioneId  null = global key
+ * @param ?string $filterAssocId   optional filter from ?associazione_id=
  * @param array $segments URL path segments after 'eventi'
  */
-function handleEventi(PDO $pdo, array $apiKey, string $associazioneId, string $method, array $segments): void
+function handleEventi(PDO $pdo, array $apiKey, ?string $associazioneId, string $method, array $segments, ?string $filterAssocId = null): void
 {
+    $isGlobal = ($associazioneId === null);
+
     // POST /eventi/{id}/checkin
     if ($method === 'POST' && isset($segments[1], $segments[2]) && $segments[2] === 'checkin') {
         apiRequirePermission($apiKey, 'eventi:write');
@@ -21,13 +25,22 @@ function handleEventi(PDO $pdo, array $apiKey, string $associazioneId, string $m
             apiError('ID evento non valido.', 400, 'invalid_id');
         }
 
-        // Verify event exists
-        $evStmt = $pdo->prepare("SELECT id, titolo FROM eventi WHERE id = ? AND associazione_id = ?");
-        $evStmt->execute([$eventoId, $associazioneId]);
+        // Verify event exists (scoped or global)
+        $evWhere = 'id = ?';
+        $evParams = [$eventoId];
+        if ($associazioneId !== null) {
+            $evWhere .= ' AND associazione_id = ?';
+            $evParams[] = $associazioneId;
+        }
+        $evStmt = $pdo->prepare("SELECT id, titolo, associazione_id FROM eventi WHERE $evWhere");
+        $evStmt->execute($evParams);
         $evento = $evStmt->fetch();
         if (!$evento) {
             apiError('Evento non trovato.', 404, 'not_found');
         }
+
+        // For checkin, use the event's own associazione_id for lookups
+        $eventAssocId = $evento['associazione_id'];
 
         $body = apiGetJsonBody();
 
@@ -38,9 +51,8 @@ function handleEventi(PDO $pdo, array $apiKey, string $associazioneId, string $m
         $tesseraId = $body['tessera_id'] ?? null;
 
         if ($socioId === null && $tesseraId !== null) {
-            // Lookup socio by tessera UUID (from QR scan)
             $tStmt = $pdo->prepare("SELECT socio_id FROM tessere WHERE id = ? AND associazione_id = ?");
-            $tStmt->execute([$tesseraId, $associazioneId]);
+            $tStmt->execute([$tesseraId, $eventAssocId]);
             $row = $tStmt->fetch();
             if ($row) {
                 $socioId = $row['socio_id'];
@@ -49,7 +61,7 @@ function handleEventi(PDO $pdo, array $apiKey, string $associazioneId, string $m
 
         if ($socioId === null && $numeroTessera !== null) {
             $tStmt = $pdo->prepare("SELECT socio_id FROM tessere WHERE numero_tessera = ? AND associazione_id = ? ORDER BY anno_validita DESC LIMIT 1");
-            $tStmt->execute([$numeroTessera, $associazioneId]);
+            $tStmt->execute([$numeroTessera, $eventAssocId]);
             $row = $tStmt->fetch();
             if ($row) {
                 $socioId = $row['socio_id'];
@@ -58,7 +70,7 @@ function handleEventi(PDO $pdo, array $apiKey, string $associazioneId, string $m
 
         if ($socioId === null && $numeroSocio !== null) {
             $sStmt = $pdo->prepare("SELECT id FROM soci WHERE numero_socio = ? AND associazione_id = ?");
-            $sStmt->execute([$numeroSocio, $associazioneId]);
+            $sStmt->execute([$numeroSocio, $eventAssocId]);
             $row = $sStmt->fetch();
             if ($row) {
                 $socioId = $row['id'];
@@ -69,9 +81,9 @@ function handleEventi(PDO $pdo, array $apiKey, string $associazioneId, string $m
             apiError('Socio non identificato. Fornisci socio_id, tessera_id, numero_tessera o numero_socio.', 400, 'missing_socio');
         }
 
-        // Verify socio exists and belongs to association
+        // Verify socio exists and belongs to event's association
         $socioStmt = $pdo->prepare("SELECT id, nome, cognome, numero_socio, stato FROM soci WHERE id = ? AND associazione_id = ?");
-        $socioStmt->execute([$socioId, $associazioneId]);
+        $socioStmt->execute([$socioId, $eventAssocId]);
         $socio = $socioStmt->fetch();
 
         if (!$socio) {
@@ -102,13 +114,11 @@ function handleEventi(PDO $pdo, array $apiKey, string $associazioneId, string $m
 
         try {
             if ($existing) {
-                // Update existing record
                 $updStmt = $pdo->prepare("UPDATE eventi_partecipanti SET stato_partecipazione = 'Confermato', data_conferma = NOW() WHERE id = ?");
                 $updStmt->execute([$existing['id']]);
             } else {
-                // Insert new participation
                 $insStmt = $pdo->prepare("INSERT INTO eventi_partecipanti (id, associazione_id, evento_id, socio_id, stato_partecipazione, data_conferma) VALUES (?, ?, ?, ?, 'Confermato', NOW())");
-                $insStmt->execute([generateUuid(), $associazioneId, $eventoId, $socioId]);
+                $insStmt->execute([generateUuid(), $eventAssocId, $eventoId, $socioId]);
             }
 
             apiResponse([
@@ -136,8 +146,18 @@ function handleEventi(PDO $pdo, array $apiKey, string $associazioneId, string $m
 
     // GET /eventi/{id}
     if (isset($segments[1]) && preg_match('/^[a-f0-9-]{36}$/i', $segments[1])) {
-        $stmt = $pdo->prepare("SELECT * FROM eventi WHERE id = ? AND associazione_id = ?");
-        $stmt->execute([$segments[1], $associazioneId]);
+        $where = 'e.id = ?';
+        $params = [$segments[1]];
+        if ($associazioneId !== null) {
+            $where .= ' AND e.associazione_id = ?';
+            $params[] = $associazioneId;
+        }
+
+        $selectExtra = $isGlobal ? ', a.nome as associazione_nome, e.associazione_id' : '';
+        $joinExtra = $isGlobal ? 'JOIN associazioni a ON e.associazione_id = a.id' : '';
+
+        $stmt = $pdo->prepare("SELECT e.* $selectExtra FROM eventi e $joinExtra WHERE $where");
+        $stmt->execute($params);
         $evento = $stmt->fetch();
 
         if (!$evento) {
@@ -145,6 +165,7 @@ function handleEventi(PDO $pdo, array $apiKey, string $associazioneId, string $m
         }
 
         // Fetch participants
+        $eventAssocId = $evento['associazione_id'];
         $partStmt = $pdo->prepare("
             SELECT ep.stato_partecipazione, ep.data_conferma,
                    s.id as socio_id, s.nome, s.cognome, s.numero_socio
@@ -153,7 +174,7 @@ function handleEventi(PDO $pdo, array $apiKey, string $associazioneId, string $m
             WHERE ep.evento_id = ? AND ep.associazione_id = ?
             ORDER BY s.cognome, s.nome
         ");
-        $partStmt->execute([$segments[1], $associazioneId]);
+        $partStmt->execute([$segments[1], $eventAssocId]);
         $evento['partecipanti'] = $partStmt->fetchAll();
         $evento['totale_partecipanti'] = count($evento['partecipanti']);
 
@@ -166,30 +187,36 @@ function handleEventi(PDO $pdo, array $apiKey, string $associazioneId, string $m
     $offset = ($page - 1) * $limit;
     $futuri = isset($_GET['futuri']) && $_GET['futuri'] === '1';
 
-    $where = ['associazione_id = ?'];
-    $params = [$associazioneId];
+    $assocFilter = apiAssociationFilter('e.associazione_id', $associazioneId, $filterAssocId);
+    $where = [$assocFilter['where']];
+    $params = $assocFilter['params'];
 
     if ($futuri) {
-        $where[] = 'data_evento >= NOW()';
+        $where[] = 'e.data_evento >= NOW()';
     }
 
     if (isset($_GET['oggi']) && $_GET['oggi'] === '1') {
-        $where[] = 'DATE(data_evento) = CURDATE()';
+        $where[] = 'DATE(e.data_evento) = CURDATE()';
     }
 
     $whereClause = implode(' AND ', $where);
 
-    $countStmt = $pdo->prepare("SELECT COUNT(*) FROM eventi WHERE $whereClause");
+    $countStmt = $pdo->prepare("SELECT COUNT(*) FROM eventi e WHERE $whereClause");
     $countStmt->execute($params);
     $total = (int)$countStmt->fetchColumn();
+
+    $selectExtra = $isGlobal ? ', a.nome as associazione_nome, e.associazione_id' : '';
+    $joinExtra = $isGlobal ? 'JOIN associazioni a ON e.associazione_id = a.id' : '';
 
     $params[] = $limit;
     $params[] = $offset;
     $stmt = $pdo->prepare("
-        SELECT id, titolo, descrizione, data_evento, luogo
-        FROM eventi
+        SELECT e.id, e.titolo, e.descrizione, e.data_evento, e.luogo
+               $selectExtra
+        FROM eventi e
+        $joinExtra
         WHERE $whereClause
-        ORDER BY data_evento DESC
+        ORDER BY e.data_evento DESC
         LIMIT ? OFFSET ?
     ");
     $stmt->execute($params);

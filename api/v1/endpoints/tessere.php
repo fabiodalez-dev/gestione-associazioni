@@ -59,15 +59,20 @@ function handleTessereVerify(PDO $pdo): void
 /**
  * Authenticated tessere endpoints
  *
+ * @param ?string $associazioneId  null = global key
+ * @param ?string $filterAssocId   optional filter from ?associazione_id=
  * @param array $segments URL path segments after 'tessere'
  */
-function handleTessere(PDO $pdo, array $apiKey, string $associazioneId, string $method, array $segments): void
+function handleTessere(PDO $pdo, array $apiKey, ?string $associazioneId, string $method, array $segments, ?string $filterAssocId = null): void
 {
     if ($method !== 'GET') {
         apiError('Metodo non supportato. Usa GET.', 405, 'method_not_allowed');
     }
 
     apiRequirePermission($apiKey, 'tessere:read');
+
+    $isGlobal = ($associazioneId === null);
+    $assocFilter = apiAssociationFilter('t.associazione_id', $associazioneId, $filterAssocId);
 
     // GET /tessere/search?q=...
     if (isset($segments[1]) && $segments[1] === 'search') {
@@ -76,18 +81,27 @@ function handleTessere(PDO $pdo, array $apiKey, string $associazioneId, string $
             apiError('Parametro q obbligatorio (min 1 carattere).', 400, 'missing_query');
         }
 
+        $where = $assocFilter['where'];
+        $params = $assocFilter['params'];
+        $where .= ' AND (t.numero_tessera LIKE ? OR s.cognome LIKE ? OR s.nome LIKE ? OR s.numero_socio LIKE ?)';
+        $term = "%$q%";
+        $params = array_merge($params, [$term, $term, $term, $term]);
+
+        $selectExtra = $isGlobal ? ', a.nome as associazione_nome, t.associazione_id' : '';
+        $joinExtra = $isGlobal ? 'JOIN associazioni a ON t.associazione_id = a.id' : '';
+
         $stmt = $pdo->prepare("
             SELECT t.id, t.numero_tessera, t.anno_validita, t.data_emissione, t.data_scadenza, t.stato,
                    s.nome as socio_nome, s.cognome as socio_cognome, s.numero_socio, s.id as socio_id
+                   $selectExtra
             FROM tessere t
             JOIN soci s ON t.socio_id = s.id
-            WHERE t.associazione_id = ?
-              AND (t.numero_tessera LIKE ? OR s.cognome LIKE ? OR s.nome LIKE ? OR s.numero_socio LIKE ?)
+            $joinExtra
+            WHERE $where
             ORDER BY t.anno_validita DESC, t.numero_tessera
             LIMIT 50
         ");
-        $term = "%$q%";
-        $stmt->execute([$associazioneId, $term, $term, $term, $term]);
+        $stmt->execute($params);
 
         apiResponse([
             'success' => true,
@@ -103,13 +117,26 @@ function handleTessere(PDO $pdo, array $apiKey, string $associazioneId, string $
 
     // GET /tessere/{id}
     if (isset($segments[1]) && preg_match('/^[a-f0-9-]{36}$/i', $segments[1])) {
+        $where = 't.id = ?';
+        $params = [$segments[1]];
+
+        if ($associazioneId !== null) {
+            $where .= ' AND t.associazione_id = ?';
+            $params[] = $associazioneId;
+        }
+
+        $selectExtra = $isGlobal ? ', a.nome as associazione_nome, t.associazione_id' : '';
+        $joinExtra = $isGlobal ? 'JOIN associazioni a ON t.associazione_id = a.id' : '';
+
         $stmt = $pdo->prepare("
             SELECT t.*, s.nome as socio_nome, s.cognome as socio_cognome, s.numero_socio, s.id as socio_id
+                   $selectExtra
             FROM tessere t
             JOIN soci s ON t.socio_id = s.id
-            WHERE t.id = ? AND t.associazione_id = ?
+            $joinExtra
+            WHERE $where
         ");
-        $stmt->execute([$segments[1], $associazioneId]);
+        $stmt->execute($params);
         $tessera = $stmt->fetch();
 
         if (!$tessera) {
@@ -126,8 +153,8 @@ function handleTessere(PDO $pdo, array $apiKey, string $associazioneId, string $
     $anno = $_GET['anno'] ?? null;
     $stato = $_GET['stato'] ?? null;
 
-    $where = ['t.associazione_id = ?'];
-    $params = [$associazioneId];
+    $where = [$assocFilter['where']];
+    $params = $assocFilter['params'];
 
     if ($anno !== null && is_numeric($anno)) {
         $where[] = 't.anno_validita = ?';
@@ -144,13 +171,18 @@ function handleTessere(PDO $pdo, array $apiKey, string $associazioneId, string $
     $countStmt->execute($params);
     $total = (int)$countStmt->fetchColumn();
 
+    $selectExtra = $isGlobal ? ', a.nome as associazione_nome, t.associazione_id' : '';
+    $joinExtra = $isGlobal ? 'JOIN associazioni a ON t.associazione_id = a.id' : '';
+
     $params[] = $limit;
     $params[] = $offset;
     $stmt = $pdo->prepare("
         SELECT t.id, t.numero_tessera, t.anno_validita, t.data_emissione, t.data_scadenza, t.stato,
                s.nome as socio_nome, s.cognome as socio_cognome, s.numero_socio
+               $selectExtra
         FROM tessere t
         JOIN soci s ON t.socio_id = s.id
+        $joinExtra
         WHERE $whereClause
         ORDER BY t.anno_validita DESC, t.numero_tessera
         LIMIT ? OFFSET ?

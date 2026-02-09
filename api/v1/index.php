@@ -11,6 +11,7 @@
  *   GET  /api/v1/tessere/verify?tessera_id=UUID
  *   GET  /api/v1/soci
  *   POST /api/v1/eventi/{id}/checkin
+ *   GET  /api/v1/associazioni  (global keys only)
  */
 
 // Prevent session start (API is stateless)
@@ -45,14 +46,16 @@ if (count($segments) >= 2 && $segments[0] === 'tessere' && $segments[1] === 'ver
 
 // All other endpoints require authentication
 $apiKey = apiAuthenticate($pdo);
-$associazioneId = $apiKey['associazione_id'];
+$associazioneId = $apiKey['associazione_id']; // string|null
+
+// Optional association filter from query string (for global keys)
+$filterAssocId = $_GET['associazione_id'] ?? null;
 
 // Route to endpoint handler
 if (empty($segments)) {
-    apiResponse([
+    $response = [
         'success' => true,
         'message' => 'Associazione Soci Manager API v1',
-        'associazione' => $apiKey['associazione_nome'] ?? '',
         'endpoints' => [
             'GET /tessere' => 'Lista tessere',
             'GET /tessere/verify?tessera_id={id}' => 'Verifica tessera (pubblica)',
@@ -66,30 +69,55 @@ if (empty($segments)) {
             'GET /quote' => 'Lista quote',
             'GET /quote/{socio_id}' => 'Quote di un socio',
         ],
-    ]);
+    ];
+
+    if ($apiKey['is_globale']) {
+        $response['associazione'] = 'Tutte (chiave globale)';
+        $response['endpoints']['GET /associazioni'] = 'Lista associazioni (solo chiavi globali)';
+    } else {
+        $response['associazione'] = $apiKey['associazione_nome'] ?? '';
+    }
+
+    apiResponse($response);
 }
 
 $resource = $segments[0];
 
 switch ($resource) {
+    case 'associazioni':
+        if (!$apiKey['is_globale']) {
+            apiError('Endpoint disponibile solo per chiavi globali.', 403, 'global_only');
+        }
+        if ($method !== 'GET') {
+            apiError('Metodo non supportato. Usa GET.', 405, 'method_not_allowed');
+        }
+        $stmt = $pdo->query("SELECT id, nome, email, citta, provincia, attiva FROM associazioni WHERE attiva = 1 ORDER BY nome");
+        $associazioni = $stmt->fetchAll();
+        apiResponse([
+            'success' => true,
+            'count' => count($associazioni),
+            'associazioni' => $associazioni,
+        ]);
+        break;
+
     case 'tessere':
         require __DIR__ . '/endpoints/tessere.php';
-        handleTessere($pdo, $apiKey, $associazioneId, $method, $segments);
+        handleTessere($pdo, $apiKey, $associazioneId, $method, $segments, $filterAssocId);
         break;
 
     case 'soci':
         require __DIR__ . '/endpoints/soci.php';
-        handleSoci($pdo, $apiKey, $associazioneId, $method, $segments);
+        handleSoci($pdo, $apiKey, $associazioneId, $method, $segments, $filterAssocId);
         break;
 
     case 'eventi':
         require __DIR__ . '/endpoints/eventi.php';
-        handleEventi($pdo, $apiKey, $associazioneId, $method, $segments);
+        handleEventi($pdo, $apiKey, $associazioneId, $method, $segments, $filterAssocId);
         break;
 
     case 'quote':
         require __DIR__ . '/endpoints/quote.php';
-        handleQuote($pdo, $apiKey, $associazioneId, $method, $segments);
+        handleQuote($pdo, $apiKey, $associazioneId, $method, $segments, $filterAssocId);
         break;
 
     default:

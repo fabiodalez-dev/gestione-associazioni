@@ -11,6 +11,7 @@
 
 /**
  * Ensure the api_keys table exists (auto-migration)
+ * Also migrates existing tables: makes associazione_id nullable for global keys.
  */
 function ensureApiKeysTable(PDO $pdo): void
 {
@@ -18,7 +19,7 @@ function ensureApiKeysTable(PDO $pdo): void
         $pdo->exec("
             CREATE TABLE api_keys (
                 id CHAR(36) PRIMARY KEY,
-                associazione_id CHAR(36) NOT NULL,
+                associazione_id CHAR(36) NULL,
                 api_key VARCHAR(64) UNIQUE NOT NULL,
                 nome VARCHAR(255) NOT NULL,
                 permessi JSON NOT NULL,
@@ -29,9 +30,41 @@ function ensureApiKeysTable(PDO $pdo): void
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 INDEX idx_api_key (api_key),
                 INDEX idx_api_assoc (associazione_id),
-                FOREIGN KEY (associazione_id) REFERENCES associazioni(id) ON DELETE CASCADE
+                FOREIGN KEY (associazione_id) REFERENCES associazioni(id) ON DELETE SET NULL
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
+    } else {
+        // Migrate existing table: make associazione_id nullable
+        try {
+            $stmt = $pdo->prepare("
+                SELECT IS_NULLABLE FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'api_keys' AND COLUMN_NAME = 'associazione_id'
+            ");
+            $stmt->execute();
+            $nullable = $stmt->fetchColumn();
+            if ($nullable === 'NO') {
+                $pdo->exec("ALTER TABLE api_keys MODIFY COLUMN associazione_id CHAR(36) NULL");
+                // Update FK to SET NULL (drop old, add new)
+                try {
+                    $fkStmt = $pdo->prepare("
+                        SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE
+                        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'api_keys'
+                          AND COLUMN_NAME = 'associazione_id' AND REFERENCED_TABLE_NAME = 'associazioni'
+                    ");
+                    $fkStmt->execute();
+                    $fkName = $fkStmt->fetchColumn();
+                    if ($fkName !== false && is_string($fkName)) {
+                        $safeName = preg_replace('/[^a-zA-Z0-9_]/', '', $fkName);
+                        $pdo->exec("ALTER TABLE api_keys DROP FOREIGN KEY `{$safeName}`");
+                        $pdo->exec("ALTER TABLE api_keys ADD CONSTRAINT `{$safeName}` FOREIGN KEY (associazione_id) REFERENCES associazioni(id) ON DELETE SET NULL");
+                    }
+                } catch (PDOException $e) {
+                    error_log('api_keys FK migration: ' . $e->getMessage());
+                }
+            }
+        } catch (PDOException $e) {
+            error_log('api_keys nullable migration: ' . $e->getMessage());
+        }
     }
 }
 
@@ -115,10 +148,11 @@ function extractBearerToken(): ?string
 
 /**
  * Authenticate an API request via Bearer token.
- * Returns the api_key row (with associazione_id) on success, or sends error and exits.
+ * Returns the api_key row on success, or sends error and exits.
+ * For global keys (associazione_id IS NULL), associazione_id will be null.
  *
  * @param PDO $pdo
- * @return array{id: string, associazione_id: string, api_key: string, nome: string, permessi: array, attiva: int}
+ * @return array{id: string, associazione_id: ?string, api_key: string, nome: string, permessi: array<string>, attiva: int, is_globale: bool}
  */
 function apiAuthenticate(PDO $pdo): array
 {
@@ -130,7 +164,7 @@ function apiAuthenticate(PDO $pdo): array
     $stmt = $pdo->prepare("
         SELECT ak.*, a.nome as associazione_nome, a.attiva as associazione_attiva
         FROM api_keys ak
-        JOIN associazioni a ON ak.associazione_id = a.id
+        LEFT JOIN associazioni a ON ak.associazione_id = a.id
         WHERE ak.api_key = ?
     ");
     $stmt->execute([$token]);
@@ -144,7 +178,8 @@ function apiAuthenticate(PDO $pdo): array
         apiError('API key disattivata.', 403, 'key_disabled');
     }
 
-    if (!$key['associazione_attiva']) {
+    // For scoped keys, check association is active
+    if ($key['associazione_id'] !== null && !$key['associazione_attiva']) {
         apiError('Associazione non attiva.', 403, 'association_disabled');
     }
 
@@ -154,6 +189,9 @@ function apiAuthenticate(PDO $pdo): array
 
     // Decode permissions
     $key['permessi'] = json_decode($key['permessi'], true) ?: [];
+
+    // Mark global status
+    $key['is_globale'] = ($key['associazione_id'] === null);
 
     // Update last usage (fire-and-forget)
     try {
@@ -230,4 +268,43 @@ function apiGetMethod(): string
         $method = strtoupper($_POST['_method']);
     }
     return $method;
+}
+
+/**
+ * Build WHERE clause + params for association filtering.
+ *
+ * For scoped keys: always filters by the key's associazione_id.
+ * For global keys: optionally filters by ?associazione_id= query param.
+ *
+ * @param string $column  SQL column name (e.g. 's.associazione_id' or 'associazione_id')
+ * @param ?string $associazioneId  From the API key (null = global)
+ * @param ?string $filterAssocId   Optional filter from query string
+ * @return array{where: string, params: array<string>, is_filtered: bool}
+ */
+function apiAssociationFilter(string $column, ?string $associazioneId, ?string $filterAssocId = null): array
+{
+    if ($associazioneId !== null) {
+        // Scoped key: mandatory filter
+        return [
+            'where' => "$column = ?",
+            'params' => [$associazioneId],
+            'is_filtered' => true,
+        ];
+    }
+
+    // Global key
+    if ($filterAssocId !== null && preg_match('/^[a-f0-9-]{36}$/i', $filterAssocId)) {
+        return [
+            'where' => "$column = ?",
+            'params' => [$filterAssocId],
+            'is_filtered' => true,
+        ];
+    }
+
+    // No filter: return all
+    return [
+        'where' => '1=1',
+        'params' => [],
+        'is_filtered' => false,
+    ];
 }

@@ -158,6 +158,8 @@
                     Gruppi Dinamici
                 </a>
             </li>
+            <?php endif; ?>
+            <?php if ($sidebar_has_assoc || ($_SESSION['user_role'] ?? '') === 'super_admin'): ?>
             <?php $apiPages = ['api-keys', 'api-docs']; $apiActive = isset($_GET['page']) && in_array($_GET['page'], $apiPages, true); ?>
             <li class="nav-item">
                 <a class="nav-link d-flex justify-content-between align-items-center <?php echo $apiActive ? '' : 'collapsed'; ?>" data-bs-toggle="collapse" href="#apiSubmenu" role="button" aria-expanded="<?php echo $apiActive ? 'true' : 'false'; ?>">

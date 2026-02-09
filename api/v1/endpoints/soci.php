@@ -9,10 +9,14 @@
  */
 
 /**
+ * @param ?string $associazioneId  null = global key
+ * @param ?string $filterAssocId   optional filter from ?associazione_id=
  * @param array $segments URL path segments after 'soci'
  */
-function handleSoci(PDO $pdo, array $apiKey, string $associazioneId, string $method, array $segments): void
+function handleSoci(PDO $pdo, array $apiKey, ?string $associazioneId, string $method, array $segments, ?string $filterAssocId = null): void
 {
+    $isGlobal = ($associazioneId === null);
+
     // GET /soci/search?q=...
     if ($method === 'GET' && isset($segments[1]) && $segments[1] === 'search') {
         apiRequirePermission($apiKey, 'soci:read');
@@ -21,16 +25,26 @@ function handleSoci(PDO $pdo, array $apiKey, string $associazioneId, string $met
             apiError('Parametro q obbligatorio (min 2 caratteri).', 400, 'missing_query');
         }
 
+        $assocFilter = apiAssociationFilter('s.associazione_id', $associazioneId, $filterAssocId);
+        $where = $assocFilter['where'];
+        $params = $assocFilter['params'];
+        $where .= ' AND (s.cognome LIKE ? OR s.nome LIKE ? OR s.numero_socio LIKE ? OR s.email LIKE ? OR s.codice_fiscale LIKE ?)';
+        $term = "%$q%";
+        $params = array_merge($params, [$term, $term, $term, $term, $term]);
+
+        $selectExtra = $isGlobal ? ', a.nome as associazione_nome, s.associazione_id' : '';
+        $joinExtra = $isGlobal ? 'JOIN associazioni a ON s.associazione_id = a.id' : '';
+
         $stmt = $pdo->prepare("
-            SELECT id, numero_socio, nome, cognome, email, telefono, stato, data_iscrizione
-            FROM soci
-            WHERE associazione_id = ?
-              AND (cognome LIKE ? OR nome LIKE ? OR numero_socio LIKE ? OR email LIKE ? OR codice_fiscale LIKE ?)
-            ORDER BY cognome, nome
+            SELECT s.id, s.numero_socio, s.nome, s.cognome, s.email, s.telefono, s.stato, s.data_iscrizione
+                   $selectExtra
+            FROM soci s
+            $joinExtra
+            WHERE $where
+            ORDER BY s.cognome, s.nome
             LIMIT 50
         ");
-        $term = "%$q%";
-        $stmt->execute([$associazioneId, $term, $term, $term, $term, $term]);
+        $stmt->execute($params);
 
         apiResponse([
             'success' => true,
@@ -43,17 +57,30 @@ function handleSoci(PDO $pdo, array $apiKey, string $associazioneId, string $met
     if ($method === 'GET' && isset($segments[1]) && preg_match('/^[a-f0-9-]{36}$/i', $segments[1])) {
         apiRequirePermission($apiKey, 'soci:read');
 
+        $where = 's.id = ?';
+        $params = [$segments[1]];
+
+        if ($associazioneId !== null) {
+            $where .= ' AND s.associazione_id = ?';
+            $params[] = $associazioneId;
+        }
+
+        $selectExtra = $isGlobal ? ', a.nome as associazione_nome, s.associazione_id' : '';
+        $joinExtra = $isGlobal ? 'JOIN associazioni a ON s.associazione_id = a.id' : '';
+
         $stmt = $pdo->prepare("
             SELECT s.id, s.numero_socio, s.nome, s.cognome, s.email, s.telefono,
                    s.data_nascita, s.codice_fiscale, s.indirizzo, s.citta, s.provincia, s.cap,
                    s.data_iscrizione, s.stato, s.note,
                    ts.nome as tipo_socio, cs.nome as categoria_socio
+                   $selectExtra
             FROM soci s
             LEFT JOIN tipi_socio ts ON s.tipo_socio_id = ts.id
             LEFT JOIN categorie_socio cs ON s.categoria_socio_id = cs.id
-            WHERE s.id = ? AND s.associazione_id = ?
+            $joinExtra
+            WHERE $where
         ");
-        $stmt->execute([$segments[1], $associazioneId]);
+        $stmt->execute($params);
         $socio = $stmt->fetch();
 
         if (!$socio) {
@@ -66,8 +93,14 @@ function handleSoci(PDO $pdo, array $apiKey, string $associazioneId, string $met
         $socio['tags'] = $tagStmt->fetchAll();
 
         // Fetch tessere attive
-        $tesseraStmt = $pdo->prepare("SELECT id, numero_tessera, anno_validita, data_scadenza, stato FROM tessere WHERE socio_id = ? AND associazione_id = ? ORDER BY anno_validita DESC LIMIT 5");
-        $tesseraStmt->execute([$segments[1], $associazioneId]);
+        $tesseraWhere = 'socio_id = ?';
+        $tesseraParams = [$segments[1]];
+        if ($associazioneId !== null) {
+            $tesseraWhere .= ' AND associazione_id = ?';
+            $tesseraParams[] = $associazioneId;
+        }
+        $tesseraStmt = $pdo->prepare("SELECT id, numero_tessera, anno_validita, data_scadenza, stato FROM tessere WHERE $tesseraWhere ORDER BY anno_validita DESC LIMIT 5");
+        $tesseraStmt->execute($tesseraParams);
         $socio['tessere'] = $tesseraStmt->fetchAll();
 
         apiResponse(['success' => true, 'socio' => $socio]);
@@ -82,10 +115,17 @@ function handleSoci(PDO $pdo, array $apiKey, string $associazioneId, string $met
             apiError('Body JSON vuoto.', 400, 'empty_body');
         }
 
-        // Verify socio exists and belongs to this association
-        $checkStmt = $pdo->prepare("SELECT id FROM soci WHERE id = ? AND associazione_id = ?");
-        $checkStmt->execute([$segments[1], $associazioneId]);
-        if (!$checkStmt->fetch()) {
+        // Verify socio exists (and belongs to association if scoped)
+        $checkWhere = 'id = ?';
+        $checkParams = [$segments[1]];
+        if ($associazioneId !== null) {
+            $checkWhere .= ' AND associazione_id = ?';
+            $checkParams[] = $associazioneId;
+        }
+        $checkStmt = $pdo->prepare("SELECT id, associazione_id FROM soci WHERE $checkWhere");
+        $checkStmt->execute($checkParams);
+        $socioRow = $checkStmt->fetch();
+        if (!$socioRow) {
             apiError('Socio non trovato.', 404, 'not_found');
         }
 
@@ -111,10 +151,14 @@ function handleSoci(PDO $pdo, array $apiKey, string $associazioneId, string $met
         }
 
         $params[] = $segments[1];
-        $params[] = $associazioneId;
+        $updateWhere = 'id = ?';
+        if ($associazioneId !== null) {
+            $updateWhere .= ' AND associazione_id = ?';
+            $params[] = $associazioneId;
+        }
 
         try {
-            $sql = "UPDATE soci SET " . implode(', ', $updates) . " WHERE id = ? AND associazione_id = ?";
+            $sql = "UPDATE soci SET " . implode(', ', $updates) . " WHERE $updateWhere";
             $stmt = $pdo->prepare($sql);
             $stmt->execute($params);
 
@@ -137,27 +181,33 @@ function handleSoci(PDO $pdo, array $apiKey, string $associazioneId, string $met
         $offset = ($page - 1) * $limit;
         $stato = $_GET['stato'] ?? null;
 
-        $where = ['associazione_id = ?'];
-        $params = [$associazioneId];
+        $assocFilter = apiAssociationFilter('s.associazione_id', $associazioneId, $filterAssocId);
+        $where = [$assocFilter['where']];
+        $params = $assocFilter['params'];
 
         if ($stato !== null && in_array($stato, ['Attivo', 'Sospeso', 'Radiato', 'Deceduto', 'Trasferito'], true)) {
-            $where[] = 'stato = ?';
+            $where[] = 's.stato = ?';
             $params[] = $stato;
         }
 
         $whereClause = implode(' AND ', $where);
 
-        $countStmt = $pdo->prepare("SELECT COUNT(*) FROM soci WHERE $whereClause");
+        $countStmt = $pdo->prepare("SELECT COUNT(*) FROM soci s WHERE $whereClause");
         $countStmt->execute($params);
         $total = (int)$countStmt->fetchColumn();
+
+        $selectExtra = $isGlobal ? ', a.nome as associazione_nome, s.associazione_id' : '';
+        $joinExtra = $isGlobal ? 'JOIN associazioni a ON s.associazione_id = a.id' : '';
 
         $params[] = $limit;
         $params[] = $offset;
         $stmt = $pdo->prepare("
-            SELECT id, numero_socio, nome, cognome, email, telefono, stato, data_iscrizione
-            FROM soci
+            SELECT s.id, s.numero_socio, s.nome, s.cognome, s.email, s.telefono, s.stato, s.data_iscrizione
+                   $selectExtra
+            FROM soci s
+            $joinExtra
             WHERE $whereClause
-            ORDER BY cognome, nome
+            ORDER BY s.cognome, s.nome
             LIMIT ? OFFSET ?
         ");
         $stmt->execute($params);
