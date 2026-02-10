@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS associazioni (
     tipo_scadenza_default ENUM('solare', 'annuale') DEFAULT 'solare' NOT NULL,
     giorni_notifica_scadenza INT DEFAULT 30,
     template_email_scadenza TEXT,
+    privacy_policy_html LONGTEXT DEFAULT NULL,
+    campi_obbligatori_config JSON DEFAULT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -126,7 +128,7 @@ CREATE TABLE IF NOT EXISTS soci (
     numero_socio VARCHAR(50) NOT NULL,
     nome VARCHAR(100) NOT NULL,
     cognome VARCHAR(100) NOT NULL,
-    data_nascita DATE NOT NULL,
+    data_nascita DATE DEFAULT NULL,
     codice_fiscale VARCHAR(16),
     email VARCHAR(255) NOT NULL,
     telefono VARCHAR(20),
@@ -135,7 +137,7 @@ CREATE TABLE IF NOT EXISTS soci (
     provincia VARCHAR(2),
     cap VARCHAR(5),
     data_iscrizione DATE NOT NULL,
-    stato ENUM('Attivo', 'Sospeso', 'Radiato', 'Deceduto', 'Trasferito') DEFAULT 'Attivo',
+    stato ENUM('Attivo', 'Sospeso', 'Radiato', 'Deceduto', 'Trasferito', 'In Attesa', 'In Attesa di Pagamento') DEFAULT 'Attivo',
     note TEXT,
     privacy_consenso BOOLEAN DEFAULT FALSE,
     email_opt_out BOOLEAN DEFAULT FALSE,
@@ -147,6 +149,8 @@ CREATE TABLE IF NOT EXISTS soci (
     password_hash VARCHAR(255) NULL,
     password_reset_token VARCHAR(255) NULL,
     password_reset_expires DATETIME NULL,
+    rinnovo_token CHAR(64) DEFAULT NULL,
+    rinnovo_token_expires DATETIME DEFAULT NULL,
     UNIQUE(associazione_id, numero_socio),
     UNIQUE(associazione_id, email),
     INDEX idx_soci_assoc (associazione_id),
@@ -232,11 +236,17 @@ CREATE TABLE IF NOT EXISTS quote (
     importo DECIMAL(10, 2) NOT NULL,
     data_scadenza DATE NOT NULL,
     data_pagamento DATE,
+    metodo_pagamento VARCHAR(50) DEFAULT NULL,
+    gateway VARCHAR(20) DEFAULT NULL,
+    gateway_transaction_id VARCHAR(255) DEFAULT NULL,
+    payment_token CHAR(64) DEFAULT NULL,
+    payment_token_expires DATETIME DEFAULT NULL,
     stato ENUM('Pagata', 'Da Pagare', 'Scaduta', 'In Scadenza') DEFAULT 'Da Pagare',
     tipo VARCHAR(100) NOT NULL,
     note TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_quote_payment_token (payment_token),
     FOREIGN KEY (socio_id) REFERENCES soci(id) ON DELETE CASCADE,
     FOREIGN KEY (associazione_id) REFERENCES associazioni(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -305,6 +315,7 @@ CREATE TABLE IF NOT EXISTS campi_personalizzati (
     descrizione TEXT,
     opzioni TEXT,
     obbligatorio BOOLEAN DEFAULT FALSE,
+    obbligatorio_preiscrizione BOOLEAN DEFAULT FALSE,
     ordine INT DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -474,6 +485,29 @@ CREATE TABLE IF NOT EXISTS smtp_settings (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================================
+-- 24b. PAYMENT_GATEWAY_SETTINGS — Stripe/PayPal config per association (FK → associazioni)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS payment_gateway_settings (
+    id CHAR(36) PRIMARY KEY,
+    associazione_id CHAR(36) NOT NULL,
+    stripe_enabled BOOLEAN DEFAULT FALSE,
+    stripe_publishable_key VARCHAR(255) DEFAULT '',
+    stripe_secret_key_encrypted TEXT DEFAULT '',
+    stripe_webhook_secret_encrypted TEXT DEFAULT '',
+    paypal_enabled BOOLEAN DEFAULT FALSE,
+    paypal_client_id VARCHAR(255) DEFAULT '',
+    paypal_client_secret_encrypted TEXT DEFAULT '',
+    paypal_mode ENUM('sandbox','live') DEFAULT 'sandbox',
+    paypal_webhook_id VARCHAR(255) DEFAULT '',
+    auto_attivazione_pagamento BOOLEAN DEFAULT TRUE,
+    valuta VARCHAR(3) DEFAULT 'EUR',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_pg_assoc (associazione_id),
+    FOREIGN KEY (associazione_id) REFERENCES associazioni(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================================
 -- 25. EMAIL_TEMPLATES — email templates per association (FK → associazioni)
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS email_templates (
@@ -582,6 +616,7 @@ CREATE INDEX idx_utenti_associazione_id ON utenti(associazione_id);
 CREATE INDEX idx_sedi_associazione_id ON sedi(associazione_id);
 CREATE INDEX idx_soci_associazione_id ON soci(associazione_id);
 CREATE INDEX idx_soci_cognome_nome ON soci(cognome, nome);
+CREATE INDEX idx_soci_rinnovo_token ON soci(rinnovo_token);
 CREATE INDEX idx_tessere_socio_id ON tessere(socio_id);
 CREATE INDEX idx_tessere_associazione_id ON tessere(associazione_id);
 CREATE INDEX idx_tessere_evento_creazione ON tessere(evento_creazione_id);

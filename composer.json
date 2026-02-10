@@ -2,7 +2,9 @@
     "require": {
         "dompdf/dompdf": "^3.0",
         "phpmailer/phpmailer": "^7.0",
-        "chillerlan/php-qrcode": "^5.0"
+        "chillerlan/php-qrcode": "^5.0",
+        "stripe/stripe-php": "^19.3",
+        "paypal/paypal-server-sdk": "^2.2"
     },
     "require-dev": {
         "phpstan/phpstan": "^2.1"

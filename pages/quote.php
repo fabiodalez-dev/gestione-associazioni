@@ -13,6 +13,11 @@ $associazione_id = $_SESSION['associazione_id'];
 $message = '';
 $messageType = '';
 
+// Load payment gateway config
+$pgConfig = loadPaymentGatewayConfig($pdo, $associazione_id);
+$hasStripe = $pgConfig !== null && !empty($pgConfig['stripe_enabled']) && !empty($pgConfig['stripe_publishable_key']);
+$hasPayPal = $pgConfig !== null && !empty($pgConfig['paypal_enabled']) && !empty($pgConfig['paypal_client_id']);
+
 // Funzione per determinare lo stato della quota dinamicamente
 function getQuotaStatus($quota) {
     if (!empty($quota['data_pagamento'])) {
@@ -38,55 +43,80 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $message = "Quota eliminata con successo.";
         $messageType = "success";
     } elseif (isset($_POST['pay_id'])) {
-        $stmt = $pdo->prepare("UPDATE quote SET data_pagamento = ? WHERE id = ? AND associazione_id = ?");
-        $stmt->execute([$_POST['payment_date'], $_POST['pay_id'], $associazione_id]);
-        
-        // Logga attività
-        $stmt_socio = $pdo->prepare("SELECT socio_id, importo, anno FROM quote WHERE id = ?");
-        $stmt_socio->execute([$_POST['pay_id']]);
-        $quota_info = $stmt_socio->fetch();
-        if ($quota_info) {
-            logSocioActivity($pdo, $associazione_id, $quota_info['socio_id'], 'Pagamento Quota', "Pagata quota di €{$quota_info['importo']} per l'anno {$quota_info['anno']}.");
-        }
+        $payMetodo = cleanInput($_POST['payment_method'] ?? 'contanti');
+        $isOnlinePayment = in_array($payMetodo, ['stripe', 'paypal'], true);
 
-        $message = "Pagamento registrato con successo.";
-        $messageType = "success";
+        if ($isOnlinePayment) {
+            // Generate payment link instead of marking as paid
+            require_once __DIR__ . '/../includes/PaymentService.php';
+            $paymentSvc = new PaymentService($pdo, $associazione_id);
+            $token = $paymentSvc->generatePaymentToken($_POST['pay_id']);
+            require_once __DIR__ . '/../includes/email_helpers.php';
+            $baseUrl = rtrim(getBaseUrl(), '/');
+            $paymentLink = $baseUrl . '/pagamento.php?token=' . urlencode($token);
+            $message = "Link pagamento generato: " . $paymentLink;
+            $messageType = "success";
+        } else {
+            $stmt = $pdo->prepare("UPDATE quote SET data_pagamento = ?, metodo_pagamento = ? WHERE id = ? AND associazione_id = ?");
+            $stmt->execute([$_POST['payment_date'], $payMetodo, $_POST['pay_id'], $associazione_id]);
 
-        // Best-effort: queue pagamento_quota email
-        if ($quota_info) {
-            try {
-                require_once __DIR__ . '/../includes/EmailService.php';
-                require_once __DIR__ . '/../includes/email_helpers.php';
-                $emailSvc = new EmailService($pdo, $associazione_id);
-                $smtpCfg = $emailSvc->loadSmtpConfig();
-                if ($emailSvc->isConfigured() && $smtpCfg !== null && !empty($smtpCfg['auto_pagamento_quota'])) {
-                    $tpl = $emailSvc->getTemplate('pagamento_quota');
-                    if ($tpl !== null && !empty($tpl['attivo'])) {
-                        $ph = buildPlaceholderValues($pdo, $associazione_id, $quota_info['socio_id'], [
-                            'IMPORTO' => $quota_info['importo'],
-                            'ANNO' => $quota_info['anno'],
-                            'DATA_PAGAMENTO' => $_POST['payment_date'],
-                        ]);
-                        $rendered = $emailSvc->renderTemplate('pagamento_quota', $ph);
-                        if ($rendered !== null) {
-                            $socioStmt = $pdo->prepare('SELECT nome, cognome, email FROM soci WHERE id = ? AND associazione_id = ?');
-                            $socioStmt->execute([$quota_info['socio_id'], $associazione_id]);
-                            $socioRow = $socioStmt->fetch();
-                            if ($socioRow && !empty($socioRow['email'])) {
-                                $emailSvc->queueEmail(
-                                    $socioRow['email'],
-                                    $socioRow['nome'] . ' ' . $socioRow['cognome'],
-                                    $rendered['subject'], $rendered['body'],
-                                    $quota_info['socio_id'], generateUuid(), 'pagamento_quota', 3
-                                );
+            // Logga attività
+            $stmt_socio = $pdo->prepare("SELECT socio_id, importo, anno FROM quote WHERE id = ? AND associazione_id = ?");
+            $stmt_socio->execute([$_POST['pay_id'], $associazione_id]);
+            $quota_info = $stmt_socio->fetch();
+            if ($quota_info) {
+                logSocioActivity($pdo, $associazione_id, $quota_info['socio_id'], 'Pagamento Quota', "Pagata quota di €{$quota_info['importo']} per l'anno {$quota_info['anno']} ({$payMetodo}).");
+            }
+
+            $message = "Pagamento registrato con successo.";
+            $messageType = "success";
+
+            // Best-effort: queue pagamento_quota email
+            if ($quota_info) {
+                try {
+                    require_once __DIR__ . '/../includes/EmailService.php';
+                    require_once __DIR__ . '/../includes/email_helpers.php';
+                    $emailSvc = new EmailService($pdo, $associazione_id);
+                    $smtpCfg = $emailSvc->loadSmtpConfig();
+                    if ($emailSvc->isConfigured() && $smtpCfg !== null && !empty($smtpCfg['auto_pagamento_quota'])) {
+                        $tpl = $emailSvc->getTemplate('pagamento_quota');
+                        if ($tpl !== null && !empty($tpl['attivo'])) {
+                            $ph = buildPlaceholderValues($pdo, $associazione_id, $quota_info['socio_id'], [
+                                'IMPORTO' => $quota_info['importo'],
+                                'ANNO' => $quota_info['anno'],
+                                'DATA_PAGAMENTO' => $_POST['payment_date'],
+                            ]);
+                            $rendered = $emailSvc->renderTemplate('pagamento_quota', $ph);
+                            if ($rendered !== null) {
+                                $socioStmt = $pdo->prepare('SELECT nome, cognome, email FROM soci WHERE id = ? AND associazione_id = ?');
+                                $socioStmt->execute([$quota_info['socio_id'], $associazione_id]);
+                                $socioRow = $socioStmt->fetch();
+                                if ($socioRow && !empty($socioRow['email'])) {
+                                    $emailSvc->queueEmail(
+                                        $socioRow['email'],
+                                        $socioRow['nome'] . ' ' . $socioRow['cognome'],
+                                        $rendered['subject'], $rendered['body'],
+                                        $quota_info['socio_id'], generateUuid(), 'pagamento_quota', 3
+                                    );
+                                }
                             }
                         }
                     }
+                } catch (\Throwable $emailErr) {
+                    error_log('quote.php email pagamento error: ' . $emailErr->getMessage());
                 }
-            } catch (\Throwable $emailErr) {
-                error_log('quote.php email pagamento error: ' . $emailErr->getMessage());
             }
         }
+    } elseif (isset($_POST['generate_payment_link'])) {
+        // Generate payment link for existing unpaid quota
+        require_once __DIR__ . '/../includes/PaymentService.php';
+        $paymentSvc = new PaymentService($pdo, $associazione_id);
+        $token = $paymentSvc->generatePaymentToken($_POST['generate_payment_link']);
+        require_once __DIR__ . '/../includes/email_helpers.php';
+        $baseUrl = rtrim(getBaseUrl(), '/');
+        $paymentLink = $baseUrl . '/pagamento.php?token=' . urlencode($token);
+        $message = "Link pagamento generato: " . $paymentLink;
+        $messageType = "success";
     } else {
         $id = $_POST['id'] ?? null;
         $socio_id = $_POST['socio_id'];
@@ -223,6 +253,9 @@ $quote_filtrate = array_filter($all_quotes, function($q) use ($statusFilter) {
                 <td class="text-end">
                     <?php if ($status !== 'Pagata'): ?>
                     <a href="index.php?page=quote&pay=<?php echo $q['id']; ?>" class="btn btn-sm btn-outline-success"><i class="bi bi-check-lg"></i> Paga</a>
+                    <?php if ($hasStripe || $hasPayPal): ?>
+                    <form method="POST" class="d-inline"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="generate_payment_link" value="<?php echo $q['id']; ?>"><button type="submit" class="btn btn-sm btn-outline-info" title="Genera link pagamento online"><i class="bi bi-link-45deg"></i></button></form>
+                    <?php endif; ?>
                     <?php endif; ?>
                     <a href="index.php?page=quote&edit=<?php echo $q['id']; ?>" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil"></i></a>
                     <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questa quota?')"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="delete_id" value="<?php echo $q['id']; ?>"><button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button></form>
@@ -256,6 +289,9 @@ $quote_filtrate = array_filter($all_quotes, function($q) use ($statusFilter) {
             <div class="card-actions">
                 <?php if ($status !== 'Pagata'): ?>
                 <a href="index.php?page=quote&pay=<?php echo $q['id']; ?>" class="btn btn-sm btn-outline-success"><i class="bi bi-check-lg me-1"></i>Paga</a>
+                <?php if ($hasStripe || $hasPayPal): ?>
+                <form method="POST" class="d-inline"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="generate_payment_link" value="<?php echo $q['id']; ?>"><button type="submit" class="btn btn-sm btn-outline-info"><i class="bi bi-link-45deg me-1"></i>Link</button></form>
+                <?php endif; ?>
                 <?php endif; ?>
                 <a href="index.php?page=quote&edit=<?php echo $q['id']; ?>" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil me-1"></i>Modifica</a>
                 <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questa quota?')"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="delete_id" value="<?php echo $q['id']; ?>"><button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash me-1"></i>Elimina</button></form>
@@ -304,7 +340,19 @@ $quote_filtrate = array_filter($all_quotes, function($q) use ($statusFilter) {
             <input type="hidden" name="pay_id" value="<?php echo $payingQuota['id']; ?>">
             <p><strong>Socio:</strong> <?php echo htmlspecialchars($payingQuota['cognome'] . ' ' . $payingQuota['nome']); ?></p>
             <p><strong>Importo:</strong> €<?php echo number_format($payingQuota['importo'], 2, ",", "."); ?></p>
-            <div class="mb-3"><label>Data Pagamento</label><input type="date" name="payment_date" class="form-control" value="<?php echo date('Y-m-d'); ?>" required></div>
+            <div class="mb-3">
+                <label class="form-label">Metodo Pagamento</label>
+                <select name="payment_method" id="quotePayMethod" class="form-select">
+                    <option value="contanti">Contanti</option>
+                    <option value="bonifico">Bonifico</option>
+                    <option value="carta">Carta</option>
+                    <option value="altro">Altro</option>
+                    <?php if ($hasStripe): ?><option value="stripe">Genera link Stripe</option><?php endif; ?>
+                    <?php if ($hasPayPal): ?><option value="paypal">Genera link PayPal</option><?php endif; ?>
+                </select>
+            </div>
+            <div class="mb-3" id="quotePayDateGroup"><label>Data Pagamento</label><input type="date" name="payment_date" class="form-control" value="<?php echo date('Y-m-d'); ?>" required></div>
+            <div id="quoteOnlineNote" class="alert alert-info d-none"><i class="bi bi-info-circle me-1"></i>Verr&agrave; generato un link di pagamento online.</div>
         </div>
         <div class="modal-footer">
             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button>
@@ -313,7 +361,19 @@ $quote_filtrate = array_filter($all_quotes, function($q) use ($statusFilter) {
     </form>
 </div></div>
 </div>
-<script>document.addEventListener('DOMContentLoaded', () => new bootstrap.Modal(document.getElementById('paymentModal')).show());</script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    new bootstrap.Modal(document.getElementById('paymentModal')).show();
+    var sel = document.getElementById('quotePayMethod');
+    if (sel) {
+        sel.addEventListener('change', function() {
+            var isOnline = (this.value === 'stripe' || this.value === 'paypal');
+            document.getElementById('quotePayDateGroup').classList.toggle('d-none', isOnline);
+            document.getElementById('quoteOnlineNote').classList.toggle('d-none', !isOnline);
+        });
+    }
+});
+</script>
 <?php endif; ?>
 
 <script>

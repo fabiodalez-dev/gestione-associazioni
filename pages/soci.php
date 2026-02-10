@@ -13,6 +13,21 @@ $associazione_id = $_SESSION['associazione_id'];
 $message = $_GET['message'] ?? '';
 $messageType = $_GET['messageType'] ?? '';
 
+// Load payment gateway config for confirm payment modal
+$pgConfig = loadPaymentGatewayConfig($pdo, $associazione_id);
+$hasStripe = $pgConfig !== null && !empty($pgConfig['stripe_enabled']) && !empty($pgConfig['stripe_publishable_key']);
+$hasPayPal = $pgConfig !== null && !empty($pgConfig['paypal_enabled']) && !empty($pgConfig['paypal_client_id']);
+
+// Load default importo from tipo_socio/associazione for suggested amounts
+$defaultCostoTessera = null;
+try {
+    $stmtCosto = $pdo->prepare("SELECT costo_tessera FROM associazioni WHERE id = ? LIMIT 1");
+    $stmtCosto->execute([$associazione_id]);
+    $defaultCostoTessera = $stmtCosto->fetchColumn() ?: null;
+} catch (PDOException $e) {
+    // ignore
+}
+
 // Configurazione di default
 $assoc_cfg = ['tipo_scadenza_default' => 'solare', 'giorni_notifica_scadenza' => 30];
 $campi_personalizzati = $tags_disponibili = $tipi_socio = $categorie_socio = $sedi = [];
@@ -44,6 +59,9 @@ $stmt_sedi = $pdo->prepare("SELECT * FROM sedi WHERE associazione_id = ? ORDER B
 $stmt_sedi->execute([$associazione_id]);
 $sedi = $stmt_sedi->fetchAll();
 
+// Carica configurazione campi obbligatori
+$required_config = loadRequiredFieldsConfig($pdo, $associazione_id);
+
 // Gestione Azioni POST
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Verifica CSRF token
@@ -53,6 +71,151 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         try {
         $pdo->beginTransaction();
+
+        // --- Approvazione pre-iscrizione (In Attesa → In Attesa di Pagamento) ---
+        if (isset($_POST['approve_id']) && !empty($_POST['approve_id'])) {
+            $approveId = $_POST['approve_id'];
+            $chkStmt = $pdo->prepare("SELECT id FROM soci WHERE id = ? AND associazione_id = ? AND stato = 'In Attesa'");
+            $chkStmt->execute([$approveId, $associazione_id]);
+            if ($chkStmt->fetch()) {
+                $pdo->prepare("UPDATE soci SET stato = 'In Attesa di Pagamento' WHERE id = ? AND associazione_id = ?")->execute([$approveId, $associazione_id]);
+                logSocioActivity($pdo, $associazione_id, $approveId, 'Approvazione pre-iscrizione', 'Pre-iscrizione approvata, in attesa di pagamento.');
+                $message = "Pre-iscrizione approvata.";
+                $messageType = "success";
+            } else {
+                $message = "Socio non trovato o stato non valido.";
+                $messageType = "danger";
+            }
+            $pdo->commit();
+            header('Location: index.php?page=soci&message=' . urlencode($message) . '&messageType=' . urlencode($messageType));
+            exit;
+        }
+
+        // --- Conferma pagamento (In Attesa di Pagamento → Attivo + tessera + email benvenuto) ---
+        if (isset($_POST['confirm_payment_id']) && !empty($_POST['confirm_payment_id'])) {
+            $payId = $_POST['confirm_payment_id'];
+            $chkStmt = $pdo->prepare("SELECT * FROM soci WHERE id = ? AND associazione_id = ? AND stato = 'In Attesa di Pagamento'");
+            $chkStmt->execute([$payId, $associazione_id]);
+            $paymentSocio = $chkStmt->fetch();
+            if ($paymentSocio) {
+                $payImporto = (float) ($_POST['confirm_payment_importo'] ?? 0);
+                $payMetodo = cleanInput($_POST['confirm_payment_metodo'] ?? 'contanti');
+                $payData = $_POST['confirm_payment_data'] ?? date('Y-m-d');
+                $payTipo = cleanInput($_POST['confirm_payment_tipo'] ?? 'Quota Associativa');
+                $isOnline = in_array($payMetodo, ['stripe', 'paypal'], true);
+
+                // Ensure PaymentService is available for quota creation
+                require_once __DIR__ . '/../includes/PaymentService.php';
+
+                if ($isOnline) {
+                    // Online: create unpaid quota, generate payment link
+                    $quotaId = PaymentService::createQuotaForSocio($pdo, $associazione_id, $payId, $payImporto, $payTipo, $payMetodo, null);
+                    $paymentSvc = new PaymentService($pdo, $associazione_id);
+                    $token = $paymentSvc->generatePaymentToken($quotaId);
+                    require_once __DIR__ . '/../includes/email_helpers.php';
+                    $baseUrl = rtrim(getBaseUrl(), '/');
+                    $paymentLink = $baseUrl . '/pagamento.php?token=' . urlencode($token);
+
+                    $message = "Quota creata. Link pagamento online: " . $paymentLink;
+                    $messageType = "success";
+                    $pdo->commit();
+                    header('Location: index.php?page=soci&message=' . urlencode($message) . '&messageType=' . urlencode($messageType));
+                    exit;
+                }
+
+                // Manual payment: create paid quota, activate socio, create tessera
+                if ($payImporto > 0) {
+                    PaymentService::createQuotaForSocio($pdo, $associazione_id, $payId, $payImporto, $payTipo, $payMetodo, $payData);
+                }
+
+                // Activate socio
+                $pdo->prepare("UPDATE soci SET stato = 'Attivo', data_iscrizione = CURDATE() WHERE id = ? AND associazione_id = ?")->execute([$payId, $associazione_id]);
+                logSocioActivity($pdo, $associazione_id, $payId, 'Pagamento confermato', "Pagamento confermato (€{$payImporto}, {$payMetodo}) e socio attivato.");
+
+                // Create tessera (reuse existing logic)
+                $anno_corrente = date('Y');
+                $stmtChk = $pdo->prepare("SELECT COUNT(*) FROM tessere WHERE associazione_id = ? AND socio_id = ? AND anno_validita = ?");
+                $stmtChk->execute([$associazione_id, $payId, $anno_corrente]);
+                if ((int)$stmtChk->fetchColumn() === 0) {
+                    $stmtCfg = $pdo->prepare("SELECT tipo_scadenza_default FROM associazioni WHERE id = ? LIMIT 1");
+                    $stmtCfg->execute([$associazione_id]);
+                    $tipo_scadenza = $stmtCfg->fetchColumn() ?: 'solare';
+                    $stmtCount = $pdo->prepare("SELECT MAX(CAST(numero_tessera AS UNSIGNED)) as max_num FROM tessere WHERE associazione_id = ?");
+                    $stmtCount->execute([$associazione_id]);
+                    $count = (int)($stmtCount->fetch()['max_num'] ?? 0) + 1;
+                    $numero_tessera = str_pad((string)$count, 4, '0', STR_PAD_LEFT);
+                    $data_emissione = date('Y-m-d');
+                    $data_scadenza = ($tipo_scadenza === 'annuale') ? date('Y-m-d', strtotime($data_emissione . ' +1 year')) : ($anno_corrente . '-12-31');
+                    $new_tessera_id = generateUuid();
+                    $pdo->prepare("INSERT INTO tessere (id, associazione_id, socio_id, numero_tessera, anno_validita, data_emissione, data_scadenza, stato, tipo_scadenza) VALUES (?, ?, ?, ?, ?, ?, ?, 'Attiva', ?)")
+                        ->execute([$new_tessera_id, $associazione_id, $payId, $numero_tessera, $anno_corrente, $data_emissione, $data_scadenza, $tipo_scadenza]);
+
+                    require_once __DIR__ . '/../includes/qrcode_helper.php';
+                    $qr_url = buildTesseraVerificationUrl($new_tessera_id);
+                    $pdo->prepare("UPDATE tessere SET qr_code_url = ? WHERE id = ?")->execute([$qr_url, $new_tessera_id]);
+                    logSocioActivity($pdo, $associazione_id, $payId, 'Generazione Tessera', "Tessera $numero_tessera generata dopo conferma pagamento.");
+                }
+
+                $message = "Pagamento confermato. Socio attivato e tessera generata.";
+                $messageType = "success";
+
+                // Send welcome email (best-effort)
+                $pdo->commit();
+                try {
+                    require_once __DIR__ . '/../includes/EmailService.php';
+                    require_once __DIR__ . '/../includes/email_helpers.php';
+                    $emailSvc = new EmailService($pdo, $associazione_id);
+                    $smtpCfg = $emailSvc->loadSmtpConfig();
+                    if ($emailSvc->isConfigured() && $smtpCfg && !empty($smtpCfg['auto_benvenuto'])) {
+                        $tpl = $emailSvc->getTemplate('benvenuto');
+                        if ($tpl && $tpl['attivo']) {
+                            $ph = buildPlaceholderValues($pdo, $associazione_id, $payId);
+                            $rendered = $emailSvc->renderTemplate('benvenuto', $ph);
+                            if ($rendered) {
+                                $emailSvc->queueEmail(
+                                    $paymentSocio['email'],
+                                    $paymentSocio['nome'] . ' ' . $paymentSocio['cognome'],
+                                    $rendered['subject'],
+                                    $rendered['body'],
+                                    $payId,
+                                    generateUuid(),
+                                    'benvenuto',
+                                    3
+                                );
+                            }
+                        }
+                    }
+                } catch (Throwable $e) {
+                    error_log('soci.php confirm_payment email error: ' . $e->getMessage());
+                }
+                header('Location: index.php?page=soci&message=' . urlencode($message) . '&messageType=' . urlencode($messageType));
+                exit;
+            } else {
+                $message = "Socio non trovato o stato non valido.";
+                $messageType = "danger";
+                $pdo->commit();
+                header('Location: index.php?page=soci&message=' . urlencode($message) . '&messageType=' . urlencode($messageType));
+                exit;
+            }
+        }
+
+        // --- Rifiuta pre-iscrizione ---
+        if (isset($_POST['reject_id']) && !empty($_POST['reject_id'])) {
+            $rejectId = $_POST['reject_id'];
+            $stmt_rej = $pdo->prepare("DELETE FROM soci WHERE id = ? AND associazione_id = ? AND stato IN ('In Attesa', 'In Attesa di Pagamento')");
+            $stmt_rej->execute([$rejectId, $associazione_id]);
+            if ($stmt_rej->rowCount() > 0) {
+                $message = "Pre-iscrizione rifiutata.";
+                $messageType = "success";
+            } else {
+                $message = "Socio non trovato o stato non valido per il rifiuto.";
+                $messageType = "danger";
+            }
+            $pdo->commit();
+            header('Location: index.php?page=soci&message=' . urlencode($message) . '&messageType=' . urlencode($messageType));
+            exit;
+        }
+
         // Eliminazione preset filtri
         if (isset($_POST['delete_filter_preset']) && !empty($_POST['preset_id_delete'])) {
             $presetId = $_POST['preset_id_delete'];
@@ -61,7 +224,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $message = "Preset eliminato";
             $messageType = "success";
             $pdo->commit();
-            header('Location: index.php?page=soci');
+            header('Location: index.php?page=soci&message=' . urlencode($message) . '&messageType=success');
             exit;
         }
 
@@ -86,7 +249,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $message = "Preset salvato";
             $messageType = "success";
             $pdo->commit();
-            header('Location: index.php?page=soci');
+            header('Location: index.php?page=soci&message=' . urlencode($message) . '&messageType=success');
             exit;
         }
         if (isset($_POST['delete_id'])) {
@@ -101,11 +264,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'cognome' => cleanInput($_POST['cognome'] ?? ''),
                 'email' => cleanInput($_POST['email'] ?? ''),
                 'numero_socio' => cleanInput($_POST['numero_socio'] ?? ''),
-                'data_nascita' => $_POST['data_nascita'] ?? null,
+                'data_nascita' => (!empty($_POST['data_nascita'])) ? $_POST['data_nascita'] : null,
                 'data_iscrizione' => $_POST['data_iscrizione'] ?? null,
                 'stato' => cleanInput($_POST['stato'] ?? ''),
-                // normalizza il CF in maiuscolo per confronti univoci
-                'codice_fiscale' => strtoupper(cleanInput($_POST['codice_fiscale'] ?? '')),
+                // normalizza il CF in maiuscolo; vuoto → NULL per evitare violazione unique constraint
+                'codice_fiscale' => ($cf = strtoupper(cleanInput($_POST['codice_fiscale'] ?? ''))) !== '' ? $cf : null,
                 'telefono' => cleanInput($_POST['telefono'] ?? ''),
                 'indirizzo' => cleanInput($_POST['indirizzo'] ?? ''),
                 'citta' => cleanInput($_POST['citta'] ?? ''),
@@ -117,6 +280,73 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'categoria_socio_id' => !empty($_POST['categoria_socio_id']) ? $_POST['categoria_socio_id'] : null,
                 'sede_id' => !empty($_POST['sede_id']) ? $_POST['sede_id'] : null
             ];
+
+            // Validazione stato (whitelist enum)
+            $stati_validi = ['Attivo', 'Sospeso', 'Radiato', 'Deceduto', 'Trasferito', 'In Attesa', 'In Attesa di Pagamento'];
+            if (!empty($socio_data['stato']) && !in_array($socio_data['stato'], $stati_validi, true)) {
+                $pdo->rollBack();
+                $message = "Stato non valido.";
+                $messageType = "danger";
+                goto SKIP_POST_SAVE;
+            }
+
+            // Validazione campi obbligatori (skip per soci In Attesa / In Attesa di Pagamento)
+            $skip_required_validation = in_array($socio_data['stato'], ['In Attesa', 'In Attesa di Pagamento'], true);
+            if (!$skip_required_validation) {
+                $missing_fields = [];
+                $field_labels = [
+                    'data_nascita' => 'Data di Nascita', 'telefono' => 'Telefono', 'codice_fiscale' => 'Codice Fiscale',
+                    'indirizzo' => 'Indirizzo', 'citta' => 'Città', 'provincia' => 'Provincia', 'cap' => 'CAP',
+                    'tipo_socio_id' => 'Tipo Socio', 'categoria_socio_id' => 'Categoria Socio', 'sede_id' => 'Sede',
+                    'privacy_consenso' => 'Consenso Privacy', 'note' => 'Note',
+                ];
+                foreach ($field_labels as $f => $label) {
+                    if (isFieldRequired($required_config, 'backend', $f)) {
+                        $val = $socio_data[$f] ?? '';
+                        if ((string)$val === '' || ($f === 'privacy_consenso' && empty($val))) {
+                            $missing_fields[] = $label;
+                        }
+                    }
+                }
+                if (!empty($missing_fields)) {
+                    $pdo->rollBack();
+                    $message = "Campi obbligatori mancanti: " . implode(', ', $missing_fields) . ".";
+                    $messageType = "danger";
+                    goto SKIP_POST_SAVE;
+                }
+            }
+
+            // Validazione FK cross-tenant: tipo_socio, categoria_socio, sede devono appartenere all'associazione
+            if (!empty($socio_data['tipo_socio_id'])) {
+                $chkFk = $pdo->prepare("SELECT COUNT(*) FROM tipi_socio WHERE id = ? AND associazione_id = ?");
+                $chkFk->execute([$socio_data['tipo_socio_id'], $associazione_id]);
+                if ((int)$chkFk->fetchColumn() === 0) {
+                    $pdo->rollBack();
+                    $message = "Tipo socio non valido per questa associazione.";
+                    $messageType = "danger";
+                    goto SKIP_POST_SAVE;
+                }
+            }
+            if (!empty($socio_data['categoria_socio_id'])) {
+                $chkFk = $pdo->prepare("SELECT COUNT(*) FROM categorie_socio WHERE id = ? AND associazione_id = ?");
+                $chkFk->execute([$socio_data['categoria_socio_id'], $associazione_id]);
+                if ((int)$chkFk->fetchColumn() === 0) {
+                    $pdo->rollBack();
+                    $message = "Categoria socio non valida per questa associazione.";
+                    $messageType = "danger";
+                    goto SKIP_POST_SAVE;
+                }
+            }
+            if (!empty($socio_data['sede_id'])) {
+                $chkFk = $pdo->prepare("SELECT COUNT(*) FROM sedi WHERE id = ? AND associazione_id = ?");
+                $chkFk->execute([$socio_data['sede_id'], $associazione_id]);
+                if ((int)$chkFk->fetchColumn() === 0) {
+                    $pdo->rollBack();
+                    $message = "Sede non valida per questa associazione.";
+                    $messageType = "danger";
+                    goto SKIP_POST_SAVE;
+                }
+            }
 
             // Verifica unicità Codice Fiscale nell'associazione
             if (!empty($socio_data['codice_fiscale'])) {
@@ -239,7 +469,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $html .= "</body></html>";
 
                             $options = new Dompdf\Options();
-                            $options->set('isRemoteEnabled', true);
+                            $options->set('isRemoteEnabled', false);
                             $options->set('defaultFont', 'DejaVu Sans');
                             $dompdf = new Dompdf\Dompdf($options);
                             $dompdf->loadHtml($html, 'UTF-8');
@@ -334,7 +564,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         if ($messageType === 'success') {
-            header('Location: index.php?page=soci');
+            header('Location: index.php?page=soci&message=' . urlencode($message) . '&messageType=success');
             exit;
         }
 SKIP_POST_SAVE:
@@ -366,6 +596,7 @@ $sql = "SELECT s.*,
                a.nome AS associazione_nome,
                cs.nome AS categoria_nome,
                ts.nome AS tipo_nome,
+               ts.costo_tessera AS tipo_costo_tessera,
                tagagg.tags AS tags,
                tt.numero_tessera, tt.data_scadenza, tt.tipo_scadenza, tt.template_tessera
         FROM soci s 
@@ -484,10 +715,12 @@ if ($gruppo_id_filter !== 'all') {
     } elseif ($has_tessera_filter === 'no') {
         $sql .= " AND tt.numero_tessera IS NULL";
     }
-    // Stato tessera: attive / scadute / all
-    if ($tessera_stato_filter === 'attive') {
+    // Stato tessera: attive / scadute / all — skip per stati pending (non hanno tessera)
+    $pendingStates = ['In Attesa', 'In Attesa di Pagamento'];
+    $skipTesseraFilter = in_array($statusFilter, $pendingStates, true);
+    if (!$skipTesseraFilter && $tessera_stato_filter === 'attive') {
         $sql .= " AND tt.numero_tessera IS NOT NULL AND (tt.stato = 'Attiva' AND (tt.data_scadenza IS NULL OR tt.data_scadenza >= CURDATE()))";
-    } elseif ($tessera_stato_filter === 'scadute') {
+    } elseif (!$skipTesseraFilter && $tessera_stato_filter === 'scadute') {
         $sql .= " AND tt.numero_tessera IS NOT NULL AND ((tt.stato = 'Scaduta') OR (tt.data_scadenza IS NOT NULL AND tt.data_scadenza < CURDATE()))";
     }
     // Filtro per tipo tessera (se disponibile)
@@ -514,6 +747,17 @@ $sql .= " ORDER BY s.cognome, s.nome ASC";
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
 $soci = $stmt->fetchAll();
+
+// Badge class for socio stato
+function getStatoBadgeClass(string $stato): string {
+    switch ($stato) {
+        case 'Attivo': return 'success';
+        case 'In Attesa': return 'warning text-dark';
+        case 'In Attesa di Pagamento': return 'info text-dark';
+        case 'Sospeso': return 'secondary';
+        default: return 'danger';
+    }
+}
 
 // AJAX response mode — return only the results HTML + count as JSON
 if (isset($_GET['ajax']) && $_GET['ajax'] === '1') {
@@ -564,7 +808,7 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === '1') {
                     <?php endif; ?>
                 </td>
                 <td>
-                    <span class="badge bg-<?php echo strtolower($socio['stato']) === 'attivo' ? 'success' : 'warning'; ?>">
+                    <span class="badge bg-<?php echo getStatoBadgeClass($socio['stato']); ?>">
                         <?php echo htmlspecialchars($socio['stato']); ?>
                     </span>
                 </td>
@@ -615,13 +859,17 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === '1') {
                 </td>
                 <td>
                     <div class="table-actions">
-                        <a href="index.php?page=soci&edit=<?php echo $socio['id']; ?>" class="btn btn-sm btn-outline-primary" title="Modifica"><i class="bi bi-pencil"></i></a>
-                        <a href="index.php?page=genera-tessera-pdf&socio_id=<?php echo $socio['id']; ?>" class="btn btn-sm btn-outline-success" title="Genera Tessera PDF" target="_blank"><i class="bi bi-credit-card"></i></a>
-                        <form method="POST" class="d-inline" onsubmit="return confirm('Sei sicuro di voler eliminare questo socio?')">
-                            <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
-                            <input type="hidden" name="delete_id" value="<?php echo $socio['id']; ?>">
-                            <button type="submit" class="btn btn-sm btn-outline-danger" title="Elimina"><i class="bi bi-trash"></i></button>
-                        </form>
+                        <?php if ($socio['stato'] === 'In Attesa'): ?>
+                            <form method="POST" class="d-inline"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="approve_id" value="<?php echo $socio['id']; ?>"><button type="submit" class="btn btn-sm btn-success" title="Approva"><i class="bi bi-check-lg"></i></button></form>
+                            <form method="POST" class="d-inline" onsubmit="return confirm('Rifiutare questa pre-iscrizione?')"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="reject_id" value="<?php echo $socio['id']; ?>"><button type="submit" class="btn btn-sm btn-danger" title="Rifiuta"><i class="bi bi-x-lg"></i></button></form>
+                        <?php elseif ($socio['stato'] === 'In Attesa di Pagamento'): ?>
+                            <button type="button" class="btn btn-sm btn-success btn-confirm-payment" title="Conferma Pagamento" data-socio-id="<?php echo $socio['id']; ?>" data-socio-nome="<?php echo htmlspecialchars($socio['nome'] . ' ' . $socio['cognome']); ?>" data-importo="<?php echo htmlspecialchars($socio['tipo_costo_tessera'] ?? $defaultCostoTessera ?? ''); ?>"><i class="bi bi-cash-coin"></i></button>
+                            <form method="POST" class="d-inline" onsubmit="return confirm('Rifiutare questa pre-iscrizione?')"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="reject_id" value="<?php echo $socio['id']; ?>"><button type="submit" class="btn btn-sm btn-danger" title="Rifiuta"><i class="bi bi-x-lg"></i></button></form>
+                        <?php else: ?>
+                            <a href="index.php?page=soci&edit=<?php echo $socio['id']; ?>" class="btn btn-sm btn-outline-primary" title="Modifica"><i class="bi bi-pencil"></i></a>
+                            <a href="index.php?page=genera-tessera-pdf&socio_id=<?php echo $socio['id']; ?>" class="btn btn-sm btn-outline-success" title="Genera Tessera PDF" target="_blank"><i class="bi bi-credit-card"></i></a>
+                            <form method="POST" class="d-inline" onsubmit="return confirm('Sei sicuro di voler eliminare questo socio?')"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="delete_id" value="<?php echo $socio['id']; ?>"><button type="submit" class="btn btn-sm btn-outline-danger" title="Elimina"><i class="bi bi-trash"></i></button></form>
+                        <?php endif; ?>
                     </div>
                 </td>
             </tr>
@@ -641,7 +889,7 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === '1') {
                         <div class="card-subtitle"><?php echo htmlspecialchars($socio['numero_socio']); ?></div>
                     </div>
                     <div class="card-status">
-                        <span class="badge bg-<?php echo strtolower($socio['stato']) === 'attivo' ? 'success' : 'warning'; ?>">
+                        <span class="badge bg-<?php echo getStatoBadgeClass($socio['stato']); ?>">
                             <?php echo htmlspecialchars($socio['stato']); ?>
                         </span>
                     </div>
@@ -688,13 +936,17 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === '1') {
                     <?php endif; ?>
                 </div>
                 <div class="card-actions">
-                    <a href="index.php?page=soci&edit=<?php echo $socio['id']; ?>" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil me-1"></i>Modifica</a>
-                    <a href="index.php?page=genera-tessera-pdf&socio_id=<?php echo $socio['id']; ?>" class="btn btn-sm btn-outline-success" target="_blank"><i class="bi bi-credit-card me-1"></i>PDF</a>
-                    <form method="POST" class="d-inline" onsubmit="return confirm('Sei sicuro di voler eliminare questo socio?')">
-                        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
-                        <input type="hidden" name="delete_id" value="<?php echo $socio['id']; ?>">
-                        <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash me-1"></i>Elimina</button>
-                    </form>
+                    <?php if ($socio['stato'] === 'In Attesa'): ?>
+                        <form method="POST" class="d-inline"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="approve_id" value="<?php echo $socio['id']; ?>"><button type="submit" class="btn btn-sm btn-success"><i class="bi bi-check-lg me-1"></i>Approva</button></form>
+                        <form method="POST" class="d-inline" onsubmit="return confirm('Rifiutare questa pre-iscrizione?')"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="reject_id" value="<?php echo $socio['id']; ?>"><button type="submit" class="btn btn-sm btn-danger"><i class="bi bi-x-lg me-1"></i>Rifiuta</button></form>
+                    <?php elseif ($socio['stato'] === 'In Attesa di Pagamento'): ?>
+                        <button type="button" class="btn btn-sm btn-success btn-confirm-payment" data-socio-id="<?php echo $socio['id']; ?>" data-socio-nome="<?php echo htmlspecialchars($socio['nome'] . ' ' . $socio['cognome']); ?>" data-importo="<?php echo htmlspecialchars($socio['tipo_costo_tessera'] ?? $defaultCostoTessera ?? ''); ?>"><i class="bi bi-cash-coin me-1"></i>Pagamento</button>
+                        <form method="POST" class="d-inline" onsubmit="return confirm('Rifiutare questa pre-iscrizione?')"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="reject_id" value="<?php echo $socio['id']; ?>"><button type="submit" class="btn btn-sm btn-danger"><i class="bi bi-x-lg me-1"></i>Rifiuta</button></form>
+                    <?php else: ?>
+                        <a href="index.php?page=soci&edit=<?php echo $socio['id']; ?>" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil me-1"></i>Modifica</a>
+                        <a href="index.php?page=genera-tessera-pdf&socio_id=<?php echo $socio['id']; ?>" class="btn btn-sm btn-outline-success" target="_blank"><i class="bi bi-credit-card me-1"></i>PDF</a>
+                        <form method="POST" class="d-inline" onsubmit="return confirm('Sei sicuro di voler eliminare questo socio?')"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="delete_id" value="<?php echo $socio['id']; ?>"><button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash me-1"></i>Elimina</button></form>
+                    <?php endif; ?>
                 </div>
             </div>
         <?php endforeach; ?>
@@ -724,8 +976,26 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === '1') {
 <div class="alert alert-<?php echo htmlspecialchars($messageType); ?>"><?php echo htmlspecialchars($message); ?></div>
 <?php endif; ?>
 
+<?php
+// Count pending pre-registrations
+$stmtPending = $pdo->prepare("SELECT COUNT(*) FROM soci WHERE associazione_id = ? AND stato IN ('In Attesa', 'In Attesa di Pagamento')");
+$stmtPending->execute([$associazione_id]);
+$pendingCount = (int)$stmtPending->fetchColumn();
+if ($pendingCount > 0): ?>
+<div class="alert alert-warning d-flex align-items-center mb-3">
+    <i class="bi bi-hourglass-split me-2 fs-5"></i>
+    <div>
+        <strong><?php echo $pendingCount; ?> pre-iscrizi<?php echo $pendingCount === 1 ? 'one' : 'oni'; ?> in attesa.</strong>
+        <a href="index.php?page=soci&status=In+Attesa&tessera_stato=all" class="ms-2">Mostra</a>
+    </div>
+</div>
+<?php endif; ?>
+
 <div class="d-flex justify-content-between mb-3 align-items-start flex-wrap gap-2">
-    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#socioModal"><i class="bi bi-plus-lg"></i> Nuovo Socio</button>
+    <div class="d-flex gap-2 flex-wrap">
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#socioModal"><i class="bi bi-plus-lg"></i> Nuovo Socio</button>
+        <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#preiscrizioneModal"><i class="bi bi-link-45deg"></i> Link Pre-iscrizione</button>
+    </div>
     <div class="ms-auto d-flex flex-column align-items-end gap-2">
         <form method="GET" class="d-flex align-items-center gap-2 flex-wrap">
             <input type="hidden" name="page" value="soci">
@@ -844,6 +1114,8 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === '1') {
                             <option value="Radiato" <?php echo $statusFilter==='Radiato'?'selected':''; ?>>Radiato</option>
                             <option value="Deceduto" <?php echo $statusFilter==='Deceduto'?'selected':''; ?>>Deceduto</option>
                             <option value="Trasferito" <?php echo $statusFilter==='Trasferito'?'selected':''; ?>>Trasferito</option>
+                            <option value="In Attesa" <?php echo $statusFilter==='In Attesa'?'selected':''; ?>>In Attesa</option>
+                            <option value="In Attesa di Pagamento" <?php echo $statusFilter==='In Attesa di Pagamento'?'selected':''; ?>>In Attesa di Pagamento</option>
                         </select>
                     </div>
                     
@@ -1030,7 +1302,7 @@ function deletePreset(){
                     <?php endif; ?>
                 </td>
                 <td>
-                    <span class="badge bg-<?php echo strtolower($socio['stato']) === 'attivo' ? 'success' : 'warning'; ?>">
+                    <span class="badge bg-<?php echo getStatoBadgeClass($socio['stato']); ?>">
                         <?php echo htmlspecialchars($socio['stato']); ?>
                     </span>
                 </td>
@@ -1081,24 +1353,17 @@ function deletePreset(){
                 </td>
                 <td>
                     <div class="table-actions">
-                        <a href="index.php?page=soci&edit=<?php echo $socio['id']; ?>" 
-                           class="btn btn-sm btn-outline-primary" 
-                           title="Modifica">
-                            <i class="bi bi-pencil"></i>
-                        </a>
-                        <a href="index.php?page=genera-tessera-pdf&socio_id=<?php echo $socio['id']; ?>" 
-                           class="btn btn-sm btn-outline-success" 
-                           title="Genera Tessera PDF" 
-                           target="_blank">
-                            <i class="bi bi-credit-card"></i>
-                        </a>
-                        <form method="POST" class="d-inline" onsubmit="return confirm('Sei sicuro di voler eliminare questo socio?')">
-                            <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
-                            <input type="hidden" name="delete_id" value="<?php echo $socio['id']; ?>">
-                            <button type="submit" class="btn btn-sm btn-outline-danger" title="Elimina">
-                                <i class="bi bi-trash"></i>
-                            </button>
-                        </form>
+                        <?php if ($socio['stato'] === 'In Attesa'): ?>
+                            <form method="POST" class="d-inline"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="approve_id" value="<?php echo $socio['id']; ?>"><button type="submit" class="btn btn-sm btn-success" title="Approva"><i class="bi bi-check-lg"></i></button></form>
+                            <form method="POST" class="d-inline" onsubmit="return confirm('Rifiutare questa pre-iscrizione?')"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="reject_id" value="<?php echo $socio['id']; ?>"><button type="submit" class="btn btn-sm btn-danger" title="Rifiuta"><i class="bi bi-x-lg"></i></button></form>
+                        <?php elseif ($socio['stato'] === 'In Attesa di Pagamento'): ?>
+                            <button type="button" class="btn btn-sm btn-success btn-confirm-payment" title="Conferma Pagamento" data-socio-id="<?php echo $socio['id']; ?>" data-socio-nome="<?php echo htmlspecialchars($socio['nome'] . ' ' . $socio['cognome']); ?>" data-importo="<?php echo htmlspecialchars($socio['tipo_costo_tessera'] ?? $defaultCostoTessera ?? ''); ?>"><i class="bi bi-cash-coin"></i></button>
+                            <form method="POST" class="d-inline" onsubmit="return confirm('Rifiutare questa pre-iscrizione?')"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="reject_id" value="<?php echo $socio['id']; ?>"><button type="submit" class="btn btn-sm btn-danger" title="Rifiuta"><i class="bi bi-x-lg"></i></button></form>
+                        <?php else: ?>
+                            <a href="index.php?page=soci&edit=<?php echo $socio['id']; ?>" class="btn btn-sm btn-outline-primary" title="Modifica"><i class="bi bi-pencil"></i></a>
+                            <a href="index.php?page=genera-tessera-pdf&socio_id=<?php echo $socio['id']; ?>" class="btn btn-sm btn-outline-success" title="Genera Tessera PDF" target="_blank"><i class="bi bi-credit-card"></i></a>
+                            <form method="POST" class="d-inline" onsubmit="return confirm('Sei sicuro di voler eliminare questo socio?')"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="delete_id" value="<?php echo $socio['id']; ?>"><button type="submit" class="btn btn-sm btn-outline-danger" title="Elimina"><i class="bi bi-trash"></i></button></form>
+                        <?php endif; ?>
                     </div>
                 </td>
             </tr>
@@ -1120,7 +1385,7 @@ function deletePreset(){
                         <div class="card-subtitle"><?php echo htmlspecialchars($socio['numero_socio']); ?></div>
                     </div>
                     <div class="card-status">
-                        <span class="badge bg-<?php echo strtolower($socio['stato']) === 'attivo' ? 'success' : 'warning'; ?>">
+                        <span class="badge bg-<?php echo getStatoBadgeClass($socio['stato']); ?>">
                             <?php echo htmlspecialchars($socio['stato']); ?>
                         </span>
                     </div>
@@ -1203,22 +1468,17 @@ function deletePreset(){
                 </div>
                 
                 <div class="card-actions">
-                    <a href="index.php?page=soci&edit=<?php echo $socio['id']; ?>" 
-                       class="btn btn-sm btn-outline-primary">
-                        <i class="bi bi-pencil me-1"></i>Modifica
-                    </a>
-                    <a href="index.php?page=genera-tessera-pdf&socio_id=<?php echo $socio['id']; ?>" 
-                       class="btn btn-sm btn-outline-success" 
-                       target="_blank">
-                        <i class="bi bi-credit-card me-1"></i>PDF
-                    </a>
-                    <form method="POST" class="d-inline" onsubmit="return confirm('Sei sicuro di voler eliminare questo socio?')">
-                        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
-                        <input type="hidden" name="delete_id" value="<?php echo $socio['id']; ?>">
-                        <button type="submit" class="btn btn-sm btn-outline-danger">
-                            <i class="bi bi-trash me-1"></i>Elimina
-                        </button>
-                    </form>
+                    <?php if ($socio['stato'] === 'In Attesa'): ?>
+                        <form method="POST" class="d-inline"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="approve_id" value="<?php echo $socio['id']; ?>"><button type="submit" class="btn btn-sm btn-success"><i class="bi bi-check-lg me-1"></i>Approva</button></form>
+                        <form method="POST" class="d-inline" onsubmit="return confirm('Rifiutare questa pre-iscrizione?')"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="reject_id" value="<?php echo $socio['id']; ?>"><button type="submit" class="btn btn-sm btn-danger"><i class="bi bi-x-lg me-1"></i>Rifiuta</button></form>
+                    <?php elseif ($socio['stato'] === 'In Attesa di Pagamento'): ?>
+                        <button type="button" class="btn btn-sm btn-success btn-confirm-payment" data-socio-id="<?php echo $socio['id']; ?>" data-socio-nome="<?php echo htmlspecialchars($socio['nome'] . ' ' . $socio['cognome']); ?>" data-importo="<?php echo htmlspecialchars($socio['tipo_costo_tessera'] ?? $defaultCostoTessera ?? ''); ?>"><i class="bi bi-cash-coin me-1"></i>Pagamento</button>
+                        <form method="POST" class="d-inline" onsubmit="return confirm('Rifiutare questa pre-iscrizione?')"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="reject_id" value="<?php echo $socio['id']; ?>"><button type="submit" class="btn btn-sm btn-danger"><i class="bi bi-x-lg me-1"></i>Rifiuta</button></form>
+                    <?php else: ?>
+                        <a href="index.php?page=soci&edit=<?php echo $socio['id']; ?>" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil me-1"></i>Modifica</a>
+                        <a href="index.php?page=genera-tessera-pdf&socio_id=<?php echo $socio['id']; ?>" class="btn btn-sm btn-outline-success" target="_blank"><i class="bi bi-credit-card me-1"></i>PDF</a>
+                        <form method="POST" class="d-inline" onsubmit="return confirm('Sei sicuro di voler eliminare questo socio?')"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="delete_id" value="<?php echo $socio['id']; ?>"><button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash me-1"></i>Elimina</button></form>
+                    <?php endif; ?>
                 </div>
             </div>
         <?php endforeach; ?>
@@ -1258,27 +1518,27 @@ function deletePreset(){
                  </div>
             </div>
             <div class="row">
-                <div class="col-md-6 mb-3"><label>Data di Nascita</label><input type="date" name="data_nascita" class="form-control" value="<?php echo htmlspecialchars($editingSocio['data_nascita'] ?? ''); ?>" required></div>
+                <div class="col-md-6 mb-3"><label>Data di Nascita<?php echo isFieldRequired($required_config, 'backend', 'data_nascita') ? ' <span class="text-danger">*</span>' : ''; ?></label><input type="date" name="data_nascita" class="form-control" value="<?php echo htmlspecialchars($editingSocio['data_nascita'] ?? ''); ?>" <?php echo isFieldRequired($required_config, 'backend', 'data_nascita') ? 'required' : ''; ?>></div>
                 <div class="col-md-6 mb-3"><label>Data Iscrizione</label><input type="date" name="data_iscrizione" class="form-control" value="<?php echo htmlspecialchars($editingSocio['data_iscrizione'] ?? date('Y-m-d')); ?>" required></div>
             </div>
             <div class="row">
-                <div class="col-md-6 mb-3"><label>Codice Fiscale</label><input type="text" name="codice_fiscale" class="form-control" value="<?php echo htmlspecialchars($editingSocio['codice_fiscale'] ?? ''); ?>"></div>
-                <div class="col-md-6 mb-3"><label>Telefono</label><input type="tel" name="telefono" class="form-control" value="<?php echo htmlspecialchars($editingSocio['telefono'] ?? ''); ?>"></div>
+                <div class="col-md-6 mb-3"><label>Codice Fiscale<?php echo isFieldRequired($required_config, 'backend', 'codice_fiscale') ? ' <span class="text-danger">*</span>' : ''; ?></label><input type="text" name="codice_fiscale" class="form-control" value="<?php echo htmlspecialchars($editingSocio['codice_fiscale'] ?? ''); ?>" <?php echo isFieldRequired($required_config, 'backend', 'codice_fiscale') ? 'required' : ''; ?>></div>
+                <div class="col-md-6 mb-3"><label>Telefono<?php echo isFieldRequired($required_config, 'backend', 'telefono') ? ' <span class="text-danger">*</span>' : ''; ?></label><input type="tel" name="telefono" class="form-control" value="<?php echo htmlspecialchars($editingSocio['telefono'] ?? ''); ?>" <?php echo isFieldRequired($required_config, 'backend', 'telefono') ? 'required' : ''; ?>></div>
             </div>
             <div class="row">
-                <div class="col-md-12 mb-3"><label>Indirizzo</label><input type="text" name="indirizzo" class="form-control" value="<?php echo htmlspecialchars($editingSocio['indirizzo'] ?? ''); ?>"></div>
+                <div class="col-md-12 mb-3"><label>Indirizzo<?php echo isFieldRequired($required_config, 'backend', 'indirizzo') ? ' <span class="text-danger">*</span>' : ''; ?></label><input type="text" name="indirizzo" class="form-control" value="<?php echo htmlspecialchars($editingSocio['indirizzo'] ?? ''); ?>" <?php echo isFieldRequired($required_config, 'backend', 'indirizzo') ? 'required' : ''; ?>></div>
             </div>
             <div class="row">
-                <div class="col-md-6 mb-3"><label>Città</label><input type="text" name="citta" class="form-control" value="<?php echo htmlspecialchars($editingSocio['citta'] ?? ''); ?>"></div>
-                <div class="col-md-3 mb-3"><label>Provincia</label><input type="text" name="provincia" class="form-control" maxlength="2" value="<?php echo htmlspecialchars($editingSocio['provincia'] ?? ''); ?>"></div>
-                <div class="col-md-3 mb-3"><label>CAP</label><input type="text" name="cap" class="form-control" maxlength="5" value="<?php echo htmlspecialchars($editingSocio['cap'] ?? ''); ?>"></div>
+                <div class="col-md-6 mb-3"><label>Città<?php echo isFieldRequired($required_config, 'backend', 'citta') ? ' <span class="text-danger">*</span>' : ''; ?></label><input type="text" name="citta" class="form-control" value="<?php echo htmlspecialchars($editingSocio['citta'] ?? ''); ?>" <?php echo isFieldRequired($required_config, 'backend', 'citta') ? 'required' : ''; ?>></div>
+                <div class="col-md-3 mb-3"><label>Provincia<?php echo isFieldRequired($required_config, 'backend', 'provincia') ? ' <span class="text-danger">*</span>' : ''; ?></label><input type="text" name="provincia" class="form-control" maxlength="2" value="<?php echo htmlspecialchars($editingSocio['provincia'] ?? ''); ?>" <?php echo isFieldRequired($required_config, 'backend', 'provincia') ? 'required' : ''; ?>></div>
+                <div class="col-md-3 mb-3"><label>CAP<?php echo isFieldRequired($required_config, 'backend', 'cap') ? ' <span class="text-danger">*</span>' : ''; ?></label><input type="text" name="cap" class="form-control" maxlength="5" value="<?php echo htmlspecialchars($editingSocio['cap'] ?? ''); ?>" <?php echo isFieldRequired($required_config, 'backend', 'cap') ? 'required' : ''; ?>></div>
             </div>
             <div class="row">
                 <div class="col-md-4 mb-3">
-                    <label>Tipo Socio</label>
-                    <select name="tipo_socio_id" class="form-select">
+                    <label>Tipo Socio<?php echo isFieldRequired($required_config, 'backend', 'tipo_socio_id') ? ' <span class="text-danger">*</span>' : ''; ?></label>
+                    <select name="tipo_socio_id" class="form-select" <?php echo isFieldRequired($required_config, 'backend', 'tipo_socio_id') ? 'required' : ''; ?>>
                         <option value="">-- Seleziona --</option>
-                        <?php foreach ($tipi_socio as $tipo): 
+                        <?php foreach ($tipi_socio as $tipo):
                             $display_name = $tipo['nome'];
                             if (isset($tipo['associazione_nome'])) {
                                 $display_name .= ' (' . $tipo['associazione_nome'] . ')';
@@ -1289,10 +1549,10 @@ function deletePreset(){
                     </select>
                 </div>
                 <div class="col-md-4 mb-3">
-                    <label>Categoria Socio</label>
-                    <select name="categoria_socio_id" class="form-select">
+                    <label>Categoria Socio<?php echo isFieldRequired($required_config, 'backend', 'categoria_socio_id') ? ' <span class="text-danger">*</span>' : ''; ?></label>
+                    <select name="categoria_socio_id" class="form-select" <?php echo isFieldRequired($required_config, 'backend', 'categoria_socio_id') ? 'required' : ''; ?>>
                         <option value="">-- Seleziona --</option>
-                        <?php foreach ($categorie_socio as $categoria): 
+                        <?php foreach ($categorie_socio as $categoria):
                             $display_name = $categoria['nome'];
                             if (isset($categoria['associazione_nome'])) {
                                 $display_name .= ' (' . $categoria['associazione_nome'] . ')';
@@ -1303,10 +1563,10 @@ function deletePreset(){
                     </select>
                 </div>
                 <div class="col-md-4 mb-3">
-                    <label>Sede</label>
-                    <select name="sede_id" class="form-select">
+                    <label>Sede<?php echo isFieldRequired($required_config, 'backend', 'sede_id') ? ' <span class="text-danger">*</span>' : ''; ?></label>
+                    <select name="sede_id" class="form-select" <?php echo isFieldRequired($required_config, 'backend', 'sede_id') ? 'required' : ''; ?>>
                         <option value="">-- Seleziona --</option>
-                        <?php foreach ($sedi as $sede): 
+                        <?php foreach ($sedi as $sede):
                             $display_name = $sede['nome'];
                             if (isset($sede['associazione_nome'])) {
                                 $display_name .= ' (' . $sede['associazione_nome'] . ')';
@@ -1326,18 +1586,36 @@ function deletePreset(){
                         <option value="Radiato" <?php echo ($editingSocio['stato'] ?? '') == 'Radiato' ? 'selected' : ''; ?>>Radiato</option>
                         <option value="Deceduto" <?php echo ($editingSocio['stato'] ?? '') == 'Deceduto' ? 'selected' : ''; ?>>Deceduto</option>
                         <option value="Trasferito" <?php echo ($editingSocio['stato'] ?? '') == 'Trasferito' ? 'selected' : ''; ?>>Trasferito</option>
+                        <option value="In Attesa" <?php echo ($editingSocio['stato'] ?? '') == 'In Attesa' ? 'selected' : ''; ?>>In Attesa</option>
+                        <option value="In Attesa di Pagamento" <?php echo ($editingSocio['stato'] ?? '') == 'In Attesa di Pagamento' ? 'selected' : ''; ?>>In Attesa di Pagamento</option>
                     </select>
                 </div>
                 <div class="col-md-4 mb-3 d-flex align-items-end">
                     <div class="form-check">
-                        <input class="form-check-input" type="checkbox" name="privacy_consenso" id="privacy_consenso" value="1" <?php echo ($editingSocio['privacy_consenso'] ?? 0) ? 'checked' : ''; ?>>
-                        <label class="form-check-label" for="privacy_consenso">Consenso Privacy</label>
+                        <input class="form-check-input" type="checkbox" name="privacy_consenso" id="privacy_consenso" value="1" <?php echo ($editingSocio['privacy_consenso'] ?? 0) ? 'checked' : ''; ?> <?php echo isFieldRequired($required_config, 'backend', 'privacy_consenso') ? 'required' : ''; ?>>
+                        <label class="form-check-label" for="privacy_consenso">Consenso Privacy<?php echo isFieldRequired($required_config, 'backend', 'privacy_consenso') ? ' <span class="text-danger">*</span>' : ''; ?></label>
                     </div>
                 </div>
             </div>
+
+            <?php if ($editingSocio && in_array($editingSocio['stato'], ['In Attesa', 'In Attesa di Pagamento'], true)): ?>
+            <div class="alert alert-info py-2 mb-3">
+                <strong><i class="bi bi-lightning-charge me-1"></i>Azioni rapide</strong>
+                <div class="mt-2 d-flex flex-wrap gap-2">
+                <?php if ($editingSocio['stato'] === 'In Attesa'): ?>
+                    <button type="submit" form="quickActionApprove" class="btn btn-success btn-sm"><i class="bi bi-check-lg me-1"></i>Approva</button>
+                    <button type="submit" form="quickActionReject" class="btn btn-danger btn-sm" onclick="return confirm('Rifiutare questa pre-iscrizione? Il socio verrà eliminato.');"><i class="bi bi-x-lg me-1"></i>Rifiuta</button>
+                <?php elseif ($editingSocio['stato'] === 'In Attesa di Pagamento'): ?>
+                    <button type="button" class="btn btn-success btn-sm btn-confirm-payment" data-socio-id="<?php echo htmlspecialchars($editingSocio['id']); ?>" data-socio-nome="<?php echo htmlspecialchars($editingSocio['nome'] . ' ' . $editingSocio['cognome']); ?>" data-importo="<?php echo htmlspecialchars($defaultCostoTessera ?? ''); ?>"><i class="bi bi-cash-coin me-1"></i>Conferma Pagamento e Attiva</button>
+                    <button type="submit" form="quickActionReject" class="btn btn-danger btn-sm" onclick="return confirm('Rifiutare questa pre-iscrizione? Il socio verrà eliminato.');"><i class="bi bi-x-lg me-1"></i>Rifiuta</button>
+                <?php endif; ?>
+                </div>
+            </div>
+            <?php endif; ?>
+
             <div class="mb-3">
-                <label>Note</label>
-                <textarea name="note" class="form-control" rows="3"><?php echo htmlspecialchars($editingSocio['note'] ?? ''); ?></textarea>
+                <label>Note<?php echo isFieldRequired($required_config, 'backend', 'note') ? ' <span class="text-danger">*</span>' : ''; ?></label>
+                <textarea name="note" class="form-control" rows="3" <?php echo isFieldRequired($required_config, 'backend', 'note') ? 'required' : ''; ?>><?php echo htmlspecialchars($editingSocio['note'] ?? ''); ?></textarea>
             </div>
             
             <?php if (!empty($campi_personalizzati)): ?>
@@ -1401,8 +1679,99 @@ function deletePreset(){
     </form>
 </div></div>
 
+<?php if ($editingSocio && in_array($editingSocio['stato'], ['In Attesa', 'In Attesa di Pagamento'], true)): ?>
+<!-- Hidden forms for quick actions inside modal -->
+<?php if ($editingSocio['stato'] === 'In Attesa'): ?>
+<form id="quickActionApprove" method="POST" action="index.php?page=soci" style="display:none;">
+    <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
+    <input type="hidden" name="approve_id" value="<?php echo htmlspecialchars($editingSocio['id']); ?>">
+</form>
+<?php endif; ?>
+<form id="quickActionReject" method="POST" action="index.php?page=soci" style="display:none;">
+    <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
+    <input type="hidden" name="reject_id" value="<?php echo htmlspecialchars($editingSocio['id']); ?>">
+</form>
+<?php endif; ?>
+
 ?>
 </div>
+
+<?php
+// Build pre-registration URL
+$preiscrizioneBaseUrl = '';
+$scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+$host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+$scriptDir = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/');
+$preiscrizioneBaseUrl = $scheme . '://' . $host . $scriptDir . '/preiscrizione.php?assoc=' . urlencode($associazione_id);
+?>
+<!-- Modale Link Pre-iscrizione -->
+<div class="modal fade" id="preiscrizioneModal" tabindex="-1">
+<div class="modal-dialog"><div class="modal-content">
+    <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-link-45deg me-2"></i>Link Pubblico di Pre-iscrizione</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+    </div>
+    <div class="modal-body">
+        <p>Condividi questo link con i potenziali soci. Possono compilare il form di pre-iscrizione senza bisogno di un account.</p>
+
+        <label class="form-label fw-semibold">Link da condividere</label>
+        <div class="input-group mb-3">
+            <input type="text" class="form-control font-monospace" id="preiscrizioneUrl" value="<?php echo htmlspecialchars($preiscrizioneBaseUrl); ?>" readonly>
+            <button class="btn btn-outline-primary" type="button" id="copyLinkBtn" title="Copia link">
+                <i class="bi bi-clipboard"></i>
+            </button>
+        </div>
+        <div id="copyFeedback" class="text-success small mb-3" style="display:none;">
+            <i class="bi bi-check-circle me-1"></i>Link copiato!
+        </div>
+
+        <div class="card bg-light border-0">
+            <div class="card-body py-3">
+                <h6 class="card-title mb-2"><i class="bi bi-info-circle me-1"></i>Come funziona</h6>
+                <ol class="mb-0 small">
+                    <li>Il potenziale socio compila il form e invia la richiesta</li>
+                    <li>Il socio viene creato con stato <span class="badge bg-warning text-dark">In Attesa</span></li>
+                    <li>Tu ricevi una notifica email e vedi il banner in questa pagina</li>
+                    <li>Clicca <span class="badge bg-success"><i class="bi bi-check-lg"></i> Approva</span> per approvare</li>
+                    <li>Lo stato diventa <span class="badge bg-info text-dark">In Attesa di Pagamento</span></li>
+                    <li>Dopo il pagamento, clicca <span class="badge bg-success"><i class="bi bi-cash-coin"></i> Pagamento</span></li>
+                    <li>Il socio diventa <span class="badge bg-success">Attivo</span>, la tessera viene generata e l'email di benvenuto inviata</li>
+                </ol>
+            </div>
+        </div>
+
+        <div class="mt-3">
+            <h6><i class="bi bi-chat-dots me-1"></i>Suggerimenti</h6>
+            <ul class="small text-muted mb-0">
+                <li>Puoi inserire il link nel sito web dell'associazione</li>
+                <li>Puoi inviarlo via WhatsApp, email o social media</li>
+                <li>Il link funziona anche da smartphone</li>
+                <li>Alla scadenza della tessera, il sistema invia automaticamente un link di rinnovo pre-compilato</li>
+            </ul>
+        </div>
+    </div>
+    <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Chiudi</button>
+    </div>
+</div></div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    var copyBtn = document.getElementById('copyLinkBtn');
+    if (copyBtn) {
+        copyBtn.addEventListener('click', function() {
+            var urlInput = document.getElementById('preiscrizioneUrl');
+            if (urlInput) {
+                navigator.clipboard.writeText(urlInput.value).then(function() {
+                    var fb = document.getElementById('copyFeedback');
+                    if (fb) { fb.style.display = 'block'; setTimeout(function() { fb.style.display = 'none'; }, 2000); }
+                });
+            }
+        });
+    }
+});
+</script>
 
 <!-- Script per gestire il submit del form in modo asincrono -->
 <script>
@@ -1512,6 +1881,89 @@ document.addEventListener('DOMContentLoaded', function() {
             .catch(function(err) { console.error('AJAX filter error:', err); });
     }
 })();
+</script>
+
+<!-- Modal Conferma Pagamento -->
+<div class="modal fade" id="confirmPaymentModal" tabindex="-1">
+<div class="modal-dialog"><div class="modal-content">
+    <div class="modal-header"><h5 class="modal-title">Conferma Pagamento</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <form method="POST" action="index.php?page=soci">
+        <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
+        <input type="hidden" name="confirm_payment_id" id="cpSocioId" value="">
+        <div class="modal-body">
+            <div class="mb-3">
+                <label class="form-label">Socio</label>
+                <input type="text" class="form-control" id="cpSocioNome" readonly>
+            </div>
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Importo (€)</label>
+                    <input type="number" step="0.01" min="0" name="confirm_payment_importo" id="cpImporto" class="form-control" required>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">Data Pagamento</label>
+                    <input type="date" name="confirm_payment_data" id="cpData" class="form-control" value="<?php echo date('Y-m-d'); ?>" required>
+                </div>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Metodo Pagamento</label>
+                <select name="confirm_payment_metodo" id="cpMetodo" class="form-select" required>
+                    <option value="contanti">Contanti</option>
+                    <option value="bonifico">Bonifico</option>
+                    <option value="carta">Carta</option>
+                    <option value="altro">Altro</option>
+                    <?php if ($hasStripe): ?>
+                    <option value="stripe">Invia link Stripe</option>
+                    <?php endif; ?>
+                    <?php if ($hasPayPal): ?>
+                    <option value="paypal">Invia link PayPal</option>
+                    <?php endif; ?>
+                </select>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Tipo</label>
+                <input type="text" name="confirm_payment_tipo" class="form-control" value="Quota Associativa">
+            </div>
+            <div id="cpOnlineNote" class="alert alert-info d-none">
+                <i class="bi bi-info-circle me-1"></i>Verr&agrave; creata una quota "Da Pagare" e generato un link di pagamento online da inviare al socio.
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button>
+            <button type="submit" class="btn btn-success"><i class="bi bi-check-lg me-1"></i>Conferma</button>
+        </div>
+    </form>
+</div></div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    var cpModal = document.getElementById('confirmPaymentModal');
+    if (!cpModal) return;
+    document.querySelectorAll('.btn-confirm-payment').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            document.getElementById('cpSocioId').value = this.dataset.socioId;
+            document.getElementById('cpSocioNome').value = this.dataset.socioNome;
+            var importo = this.dataset.importo;
+            document.getElementById('cpImporto').value = importo || '';
+            document.getElementById('cpData').value = new Date().toISOString().split('T')[0];
+            document.getElementById('cpMetodo').selectedIndex = 0;
+            document.getElementById('cpOnlineNote').classList.add('d-none');
+            new bootstrap.Modal(cpModal).show();
+        });
+    });
+    var metodoSelect = document.getElementById('cpMetodo');
+    if (metodoSelect) {
+        metodoSelect.addEventListener('change', function() {
+            var note = document.getElementById('cpOnlineNote');
+            if (this.value === 'stripe' || this.value === 'paypal') {
+                note.classList.remove('d-none');
+            } else {
+                note.classList.add('d-none');
+            }
+        });
+    }
+});
 </script>
 
 <?php if ($editingSocio): ?>

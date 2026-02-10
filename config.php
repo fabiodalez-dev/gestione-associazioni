@@ -13,7 +13,7 @@ if (!defined('INSTALLER_ACTIVE') && !defined('API_REQUEST') && !headers_sent()) 
     // Content Security Policy (avoid forcing HTTPS in local HTTP to prevent ERR_CONNECTION_CLOSED)
     $is_https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https');
     // GrapesJS pages need 'unsafe-eval' for the editor engine
-    $grapesjs_pages = ['email-templates', 'comunicazioni'];
+    $grapesjs_pages = ['email-templates', 'comunicazioni', 'configurazioni'];
     $current_page_key = $_GET['page'] ?? '';
     $needs_eval = in_array($current_page_key, $grapesjs_pages, true);
     $script_extra = $needs_eval ? " 'unsafe-eval'" : '';
@@ -79,7 +79,7 @@ if (!defined('APP_ROOT')) define('APP_ROOT', __DIR__);
 if (!defined('UPLOADS_PATH')) define('UPLOADS_PATH', APP_ROOT . '/uploads');
 
 // --- Verifica installazione tramite lock file ---
-$_installerBypass = ['install.php', 'verifica-tessera.php', 'checkin.php', 'scanner-tessera.php'];
+$_installerBypass = ['install.php', 'verifica-tessera.php', 'checkin.php', 'scanner-tessera.php', 'preiscrizione.php', 'privacy-policy.php', 'pagamento.php'];
 if (!file_exists(__DIR__ . '/.installed')) {
     if (!defined('INSTALLER_ACTIVE') && !defined('API_REQUEST') && !in_array(basename($_SERVER['PHP_SELF']), $_installerBypass, true)) {
         header('Location: install.php');
@@ -535,6 +535,129 @@ if (!function_exists('formatDate')) {
             return $dateTime->format($format);
         } catch (Exception $e) {
             return '';
+        }
+    }
+}
+
+/**
+ * Carica la configurazione dei campi obbligatori per un'associazione.
+ * Se la config è NULL (mai configurata), ritorna i default.
+ */
+if (!function_exists('loadRequiredFieldsConfig')) {
+    function loadRequiredFieldsConfig(PDO $pdo, string $associazione_id): array {
+        $defaults = [
+            'backend' => [
+                'telefono' => false,
+                'codice_fiscale' => false,
+                'data_nascita' => true,
+                'indirizzo' => false,
+                'citta' => false,
+                'provincia' => false,
+                'cap' => false,
+                'tipo_socio_id' => false,
+                'categoria_socio_id' => false,
+                'sede_id' => false,
+                'privacy_consenso' => false,
+                'note' => false,
+            ],
+            'preiscrizione' => [
+                'telefono' => false,
+                'codice_fiscale' => false,
+                'data_nascita' => true,
+                'indirizzo' => false,
+                'citta' => false,
+                'provincia' => false,
+                'cap' => false,
+                'tipo_socio_id' => false,
+                'categoria_socio_id' => false,
+                'privacy_consenso' => true,
+            ],
+        ];
+
+        try {
+            $stmt = $pdo->prepare("SELECT campi_obbligatori_config FROM associazioni WHERE id = ? LIMIT 1");
+            $stmt->execute([$associazione_id]);
+            $json = $stmt->fetchColumn();
+            if ($json) {
+                $saved = json_decode($json, true);
+                if (is_array($saved)) {
+                    foreach (['backend', 'preiscrizione'] as $ctx) {
+                        if (isset($saved[$ctx]) && is_array($saved[$ctx])) {
+                            foreach ($saved[$ctx] as $field => $val) {
+                                if (array_key_exists($field, $defaults[$ctx])) {
+                                    $defaults[$ctx][$field] = (bool)$val;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (PDOException $e) {
+            error_log('loadRequiredFieldsConfig: ' . $e->getMessage());
+        }
+
+        return $defaults;
+    }
+}
+
+/**
+ * Controlla se un campo è obbligatorio nel contesto dato.
+ */
+if (!function_exists('isFieldRequired')) {
+    function isFieldRequired(array $config, string $context, string $field_name): bool {
+        return !empty($config[$context][$field_name]);
+    }
+}
+
+/**
+ * Load payment gateway configuration for an association.
+ * Returns decrypted config array or null if not configured.
+ */
+if (!function_exists('loadPaymentGatewayConfig')) {
+    function loadPaymentGatewayConfig(PDO $pdo, string $associazione_id): ?array
+    {
+        try {
+            if (!tableExists($pdo, 'payment_gateway_settings')) {
+                return null;
+            }
+            $stmt = $pdo->prepare("SELECT * FROM payment_gateway_settings WHERE associazione_id = ? LIMIT 1");
+            $stmt->execute([$associazione_id]);
+            $row = $stmt->fetch();
+            if (!$row) {
+                return null;
+            }
+            // Decrypt secret keys
+            if (!empty($row['stripe_secret_key_encrypted'])) {
+                try {
+                    $row['stripe_secret_key'] = decryptValue($row['stripe_secret_key_encrypted']);
+                } catch (RuntimeException $e) {
+                    $row['stripe_secret_key'] = '';
+                }
+            } else {
+                $row['stripe_secret_key'] = '';
+            }
+            if (!empty($row['stripe_webhook_secret_encrypted'])) {
+                try {
+                    $row['stripe_webhook_secret'] = decryptValue($row['stripe_webhook_secret_encrypted']);
+                } catch (RuntimeException $e) {
+                    $row['stripe_webhook_secret'] = '';
+                }
+            } else {
+                $row['stripe_webhook_secret'] = '';
+            }
+            if (!empty($row['paypal_client_secret_encrypted'])) {
+                try {
+                    $row['paypal_client_secret'] = decryptValue($row['paypal_client_secret_encrypted']);
+                } catch (RuntimeException $e) {
+                    $row['paypal_client_secret'] = '';
+                }
+            } else {
+                $row['paypal_client_secret'] = '';
+            }
+            return $row;
+        } catch (PDOException $e) {
+            error_log('loadPaymentGatewayConfig: ' . $e->getMessage());
+            return null;
         }
     }
 }

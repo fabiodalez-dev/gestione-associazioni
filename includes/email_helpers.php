@@ -19,10 +19,13 @@ function getEmailPlaceholders(string $codice = ''): array
     switch ($codice) {
         case 'scadenza_tessera':
         case 'rinnovo_tessera':
-            $extra = ['DATA_SCADENZA', 'NUMERO_TESSERA'];
+            $extra = ['DATA_SCADENZA', 'NUMERO_TESSERA', 'LINK_RINNOVO', 'LINK_PAGAMENTO'];
+            break;
+        case 'nuova_preiscrizione':
+            $extra = ['TELEFONO', 'CODICE_FISCALE', 'LINK_ADMIN'];
             break;
         case 'scadenza_quota':
-            $extra = ['DATA_SCADENZA', 'IMPORTO'];
+            $extra = ['DATA_SCADENZA', 'IMPORTO', 'LINK_PAGAMENTO'];
             break;
         case 'pagamento_quota':
             $extra = ['IMPORTO', 'DATA_PAGAMENTO'];
@@ -147,4 +150,25 @@ function getBaseUrl(): string
     $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
     $path = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/');
     return $scheme . '://' . $host . $path;
+}
+
+/**
+ * Generate a renewal token for a socio. Saves to DB with 30-day expiry.
+ */
+function generateRenewalToken(PDO $pdo, string $associazioneId, string $socioId): string
+{
+    $token = bin2hex(random_bytes(32));
+    $expires = date('Y-m-d H:i:s', strtotime('+30 days'));
+    $stmt = $pdo->prepare('UPDATE soci SET rinnovo_token = ?, rinnovo_token_expires = ? WHERE id = ? AND associazione_id = ?');
+    $stmt->execute([$token, $expires, $socioId, $associazioneId]);
+    return $token;
+}
+
+/**
+ * Build the public renewal URL for a socio.
+ */
+function generateRenewalUrl(string $associazioneId, string $token): string
+{
+    $baseUrl = rtrim(getBaseUrl(), '/');
+    return $baseUrl . '/preiscrizione.php?assoc=' . urlencode($associazioneId) . '&token=' . urlencode($token);
 }
