@@ -47,10 +47,10 @@ try {
     // Verifica se esiste già una tessera per l'anno corrente
     $anno_corrente = date('Y');
     $stmt_tessera = $pdo->prepare("
-        SELECT numero_tessera, data_scadenza, tipo_scadenza, template_tessera
-        FROM tessere 
+        SELECT id, numero_tessera, data_scadenza, tipo_scadenza, template_tessera
+        FROM tessere
         WHERE socio_id = ? AND anno_validita = ?
-        ORDER BY data_emissione DESC 
+        ORDER BY data_emissione DESC
         LIMIT 1
     ");
     $stmt_tessera->execute([$socio_id, $anno_corrente]);
@@ -58,11 +58,11 @@ try {
     
     // Se non esiste, crea una nuova tessera
     if (!$tessera) {
-        // Genera numero tessera
-        $stmt_count = $pdo->prepare("SELECT COUNT(*) as count FROM tessere WHERE associazione_id = ? AND anno_validita = ?");
-        $stmt_count->execute([$associazione_id, $anno_corrente]);
-        $count = $stmt_count->fetch()['count'] + 1;
-        $numero_tessera = $anno_corrente . str_pad($count, 4, '0', STR_PAD_LEFT);
+        // Genera numero tessera progressivo per associazione
+        $stmt_count = $pdo->prepare("SELECT MAX(CAST(numero_tessera AS UNSIGNED)) as max_num FROM tessere WHERE associazione_id = ?");
+        $stmt_count->execute([$associazione_id]);
+        $count = (int)($stmt_count->fetch()['max_num'] ?? 0) + 1;
+        $numero_tessera = str_pad((string)$count, 4, '0', STR_PAD_LEFT);
         
         // Tipo scadenza e data scadenza in base alla configurazione dell'associazione
         $cfg_stmt = $pdo->prepare("SELECT tipo_scadenza_default, giorni_notifica_scadenza FROM associazioni WHERE id = ?");
@@ -86,12 +86,15 @@ try {
         ");
         $stmt_insert->execute([$tessera_id, $socio_id, $associazione_id, $numero_tessera, $anno_corrente, $data_scadenza, $tipo_scadenza, $template_tessera_value]);
         
-        $tessera = ['numero_tessera' => $numero_tessera, 'data_scadenza' => $data_scadenza, 'tipo_scadenza' => $tipo_scadenza, 'template_tessera' => $template_tessera_value];
+        $tessera = ['id' => $tessera_id, 'numero_tessera' => $numero_tessera, 'data_scadenza' => $data_scadenza, 'tipo_scadenza' => $tipo_scadenza, 'template_tessera' => $template_tessera_value];
+    } else {
+        $tessera_id = $tessera['id'];
     }
-    
+
 } catch (PDOException $e) {
+    error_log('genera-tessera-pdf.php PDOException: ' . $e->getMessage());
     http_response_code(500);
-    die("Errore nel recupero dati: " . $e->getMessage());
+    die("Errore nel recupero dati. Riprova più tardi.");
 }
 
 // Carica l'autoloader di Composer per Dompdf
@@ -101,6 +104,19 @@ if (!file_exists($autoloadPath)) {
     die('Libreria Dompdf non installata. Esegui composer install.');
 }
 require_once $autoloadPath;
+require_once __DIR__ . '/../includes/qrcode_helper.php';
+
+// Generate QR code for tessera verification
+$qr_verification_url = buildTesseraVerificationUrl($tessera_id);
+$qr_svg = generateQrSvg($qr_verification_url, 3);
+
+// Save QR URL to database
+try {
+    $stmt_qr = $pdo->prepare("UPDATE tessere SET qr_code_url = ? WHERE id = ?");
+    $stmt_qr->execute([$qr_verification_url, $tessera_id]);
+} catch (PDOException $e) {
+    error_log('genera-tessera-pdf.php QR URL update error: ' . $e->getMessage());
+}
 
 // Prepara HTML del PDF (A4)
 $associazione_nome = htmlspecialchars($socio['associazione_nome'] ?? '');
@@ -150,6 +166,8 @@ $placeholders = [
     'ANNO_VALIDITA' => $anno_corrente,
     'DATA_EMISSIONE' => date('d/m/Y'),
     'DATA_SCADENZA' => isset($tessera['data_scadenza']) ? date('d/m/Y', strtotime($tessera['data_scadenza'])) : date('d/m/Y', strtotime($anno_corrente . '-12-31')),
+    'QR_CODE' => $qr_svg,
+    'QR_URL' => $qr_verification_url,
 ];
 
 $rendered_testo = '';
@@ -167,7 +185,7 @@ if (!empty($socio['logo_url'])) {
         $logo_img = '<img src="' . htmlspecialchars($logoSrc) . '" style="height:48px; width:auto;">';
     } else {
         $path = realpath(APP_ROOT . '/' . ltrim($logoSrc, '/'));
-        if ($path && is_file($path)) {
+        if ($path && is_file($path) && strpos($path, realpath(APP_ROOT)) === 0) {
             $mime = mime_content_type($path);
             $data = base64_encode(file_get_contents($path));
             $logo_img = '<img src="data:' . htmlspecialchars($mime) . ';base64,' . $data . '" style="height:48px; width:auto;">';
@@ -201,6 +219,9 @@ $html = <<<HTML
         .line { height: 1px; background: #555; margin-top: 36px; }
         .caption { text-align: center; font-size: 10pt; color: #555; margin-top: 6px; }
         .note { font-size: 10pt; color: #666; margin-top: 14px; }
+        .qr-block { text-align: center; }
+        .qr-block svg { width: 90px; height: 90px; }
+        .qr-caption { font-size: 8pt; color: #666; margin-top: 4px; }
     </style>
     <title>Tessera $nome_completo</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -217,26 +238,23 @@ $html = <<<HTML
         <div class="meta">Data: $data_oggi</div>
     </div>
 
-    <table class="grid">
+    <table style="width:100%; border-collapse:collapse;">
         <tr>
-            <td class="label">Nome e Cognome</td>
-            <td>$nome_completo</td>
-        </tr>
-        <tr>
-            <td class="label">Numero Socio</td>
-            <td>$numero_socio</td>
-        </tr>
-        <tr>
-            <td class="label">Categoria / Tipo</td>
-            <td>$categoria_tipo</td>
-        </tr>
-        <tr>
-            <td class="label">Numero Tessera</td>
-            <td>$numero_tessera</td>
-        </tr>
-        <tr>
-            <td class="label">Costo Tessera</td>
-            <td>$costo_str</td>
+            <td style="vertical-align:top;">
+                <table class="grid">
+                    <tr><td class="label">Nome e Cognome</td><td>$nome_completo</td></tr>
+                    <tr><td class="label">Numero Socio</td><td>$numero_socio</td></tr>
+                    <tr><td class="label">Categoria / Tipo</td><td>$categoria_tipo</td></tr>
+                    <tr><td class="label">Numero Tessera</td><td>$numero_tessera</td></tr>
+                    <tr><td class="label">Costo Tessera</td><td>$costo_str</td></tr>
+                </table>
+            </td>
+            <td style="width:120px; vertical-align:top; text-align:center; padding-top:6px;">
+                <div class="qr-block">
+                    $qr_svg
+                    <div class="qr-caption">Scansiona per verificare</div>
+                </div>
+            </td>
         </tr>
     </table>
 

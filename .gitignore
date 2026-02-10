@@ -1,1 +1,5 @@
 .DS_Store
+.env
+.installed
+*.log
+firebase-debug.log

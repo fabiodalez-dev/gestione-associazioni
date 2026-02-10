@@ -1,0 +1,31 @@
+parameters:
+    level: 5
+    paths:
+        - auth
+        - pages
+        - area-soci
+        - api
+        - cron
+        - includes
+        - config.php
+        - index.php
+        - install.php
+        - verifica-tessera.php
+        - checkin.php
+        - scanner-tessera.php
+    excludePaths:
+        - vendor
+        - uploads
+        - stubs
+        - migrate.php
+    bootstrapFiles:
+        - phpstan-bootstrap.php
+    treatPhpDocTypesAsCertain: false
+    reportUnmatchedIgnoredErrors: false
+    ignoreErrors:
+        # $pdo è definito globalmente in config.php tramite require_once
+        - '#Variable \$pdo might not be defined\.#'
+        # $messageType viene inizializzato condizionalmente, ma sempre definito prima dell'uso
+        - '#Variable \$messageType might not be defined\.#'
+        # $socio_loggato è definito in area-soci/index.php prima di includere le sotto-pagine
+        - '#Variable \$socio_loggato might not be defined\.#'

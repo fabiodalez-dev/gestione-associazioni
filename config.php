@@ -3,8 +3,8 @@
  * Associazione Soci Manager - Configuration File v2.0 (SaaS)
  */
 
-// Security Headers - send immediately before any output
-if (!defined('INSTALLER_ACTIVE') && !headers_sent()) {
+// Security Headers - send immediately before any output (skip per API: gestisce i suoi headers)
+if (!defined('INSTALLER_ACTIVE') && !defined('API_REQUEST') && !headers_sent()) {
     header('X-Content-Type-Options: nosniff');
     header('X-Frame-Options: SAMEORIGIN');
     header('X-XSS-Protection: 1; mode=block');
@@ -12,18 +12,25 @@ if (!defined('INSTALLER_ACTIVE') && !headers_sent()) {
     header('Permissions-Policy: geolocation=(), microphone=(), camera=()');
     // Content Security Policy (avoid forcing HTTPS in local HTTP to prevent ERR_CONNECTION_CLOSED)
     $is_https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https');
+    // GrapesJS pages need 'unsafe-eval' for the editor engine
+    $grapesjs_pages = ['email-templates', 'comunicazioni', 'configurazioni'];
+    $current_page_key = $_GET['page'] ?? '';
+    $needs_eval = in_array($current_page_key, $grapesjs_pages, true);
+    $script_extra = $needs_eval ? " 'unsafe-eval'" : '';
     $csp = "default-src 'self'; "
          . "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com http://cdn.jsdelivr.net http://cdnjs.cloudflare.com; "
          . "style-src-elem 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com http://cdn.jsdelivr.net http://cdnjs.cloudflare.com; "
-         . "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com http://cdn.jsdelivr.net http://cdnjs.cloudflare.com; "
+         . "script-src 'self' 'unsafe-inline'" . $script_extra . " https://cdn.jsdelivr.net https://cdnjs.cloudflare.com http://cdn.jsdelivr.net http://cdnjs.cloudflare.com; "
          . "img-src 'self' data:; "
-         . "font-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com http://cdn.jsdelivr.net http://cdnjs.cloudflare.com;";
+         . "connect-src 'self'; "
+         . "font-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com http://cdn.jsdelivr.net http://cdnjs.cloudflare.com; "
+         . "worker-src 'self';";
     if ($is_https) { $csp = "upgrade-insecure-requests; " . $csp; }
     header("Content-Security-Policy: $csp");
 }
 
-// Avvia la sessione in modo sicuro
-if (session_status() === PHP_SESSION_NONE) {
+// Avvia la sessione in modo sicuro (skip per richieste API stateless)
+if (session_status() === PHP_SESSION_NONE && !defined('API_REQUEST')) {
     // Configurazioni sicurezza sessione
     ini_set('session.cookie_httponly', '1');
     // Imposta cookie secure solo se HTTPS attivo
@@ -71,6 +78,15 @@ if (!defined('DB_CHARSET')) define('DB_CHARSET', 'utf8mb4');
 if (!defined('APP_ROOT')) define('APP_ROOT', __DIR__);
 if (!defined('UPLOADS_PATH')) define('UPLOADS_PATH', APP_ROOT . '/uploads');
 
+// --- Verifica installazione tramite lock file ---
+$_installerBypass = ['install.php', 'verifica-tessera.php', 'checkin.php', 'scanner-tessera.php', 'preiscrizione.php', 'privacy-policy.php', 'pagamento.php'];
+if (!file_exists(__DIR__ . '/.installed')) {
+    if (!defined('INSTALLER_ACTIVE') && !defined('API_REQUEST') && !in_array(basename($_SERVER['PHP_SELF']), $_installerBypass, true)) {
+        header('Location: install.php');
+        exit;
+    }
+}
+
 // --- Connessione Database (PDO) ---
 try {
     $dsn = "mysql:host=" . DB_HOST . ";dbname=" . DB_NAME . ";charset=" . DB_CHARSET;
@@ -80,25 +96,19 @@ try {
         PDO::ATTR_EMULATE_PREPARES   => false,
     ];
     $pdo = new PDO($dsn, DB_USER, DB_PASS, $options);
-    
-    // Verifica se l'applicazione è installata controllando l'esistenza delle tabelle principali
-    $stmt = $pdo->query("SHOW TABLES LIKE 'associazioni'");
-    if ($stmt->rowCount() === 0) {
-        // Applicazione non installata, reindirizza all'installer
-        if (!defined('INSTALLER_ACTIVE') && basename($_SERVER['PHP_SELF']) !== 'install.php') {
-            header('Location: install.php');
-            exit;
-        }
-    }
 } catch (PDOException $e) {
-    // Errore di connessione al database - probabilmente non installato
-    if (!defined('INSTALLER_ACTIVE') && basename($_SERVER['PHP_SELF']) !== 'install.php') {
-        // Reindirizza all'installer se non siamo già nell'installer
+    if (!defined('INSTALLER_ACTIVE') && !defined('API_REQUEST') && !in_array(basename($_SERVER['PHP_SELF']), $_installerBypass, true)) {
         header('Location: install.php');
         exit;
     } else {
-        // Mostra errore solo se siamo nell'installer
-        die("Errore di connessione al database: " . $e->getMessage());
+        error_log('config.php DB connection error: ' . $e->getMessage());
+        if (defined('API_REQUEST')) {
+            http_response_code(500);
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(['success' => false, 'error' => 'Errore di connessione al database.']);
+            exit;
+        }
+        die("Errore di connessione al database. Verifica la configurazione.");
     }
 }
 
@@ -320,6 +330,53 @@ if (!function_exists('logSocioActivity')) {
     }
 }
 
+// --- Encryption Key ---
+if (!defined('APP_ENCRYPTION_KEY')) {
+    define('APP_ENCRYPTION_KEY', $_ENV['APP_ENCRYPTION_KEY'] ?? '');
+}
+
+/**
+ * Encrypt a value using AES-256-CBC.
+ * Returns base64-encoded "iv:ciphertext" string.
+ */
+if (!function_exists('encryptValue')) {
+    function encryptValue(string $plaintext): string {
+        $key = hex2bin(APP_ENCRYPTION_KEY);
+        if ($key === false || strlen($key) !== 32) {
+            throw new RuntimeException('APP_ENCRYPTION_KEY must be a 64-char hex string.');
+        }
+        $iv = random_bytes(16);
+        $cipher = openssl_encrypt($plaintext, 'aes-256-cbc', $key, OPENSSL_RAW_DATA, $iv);
+        if ($cipher === false) {
+            throw new RuntimeException('Encryption failed.');
+        }
+        return base64_encode($iv . $cipher);
+    }
+}
+
+/**
+ * Decrypt a value previously encrypted with encryptValue().
+ */
+if (!function_exists('decryptValue')) {
+    function decryptValue(string $encoded): string {
+        $key = hex2bin(APP_ENCRYPTION_KEY);
+        if ($key === false || strlen($key) !== 32) {
+            throw new RuntimeException('APP_ENCRYPTION_KEY must be a 64-char hex string.');
+        }
+        $data = base64_decode($encoded, true);
+        if ($data === false || strlen($data) < 17) {
+            throw new RuntimeException('Invalid encrypted data.');
+        }
+        $iv = substr($data, 0, 16);
+        $cipher = substr($data, 16);
+        $plain = openssl_decrypt($cipher, 'aes-256-cbc', $key, OPENSSL_RAW_DATA, $iv);
+        if ($plain === false) {
+            throw new RuntimeException('Decryption failed.');
+        }
+        return $plain;
+    }
+}
+
 // Creazione directory di base se non esistono
 if (!is_dir(UPLOADS_PATH)) {
     mkdir(UPLOADS_PATH, 0755, true);
@@ -370,6 +427,14 @@ if (!function_exists('ensureTesseraCostColumns')) {
         try {
             if (!columnExists($pdo, 'tipi_socio', 'costo_tessera')) {
                 $pdo->exec("ALTER TABLE tipi_socio ADD COLUMN costo_tessera DECIMAL(10,2) NULL AFTER descrizione");
+            }
+        } catch (PDOException $e) {
+            // ignore
+        }
+        try {
+            if (!columnExists($pdo, 'tessere', 'evento_creazione_id')) {
+                $pdo->exec("ALTER TABLE tessere ADD COLUMN evento_creazione_id CHAR(36) NULL AFTER template_tessera");
+                $pdo->exec("ALTER TABLE tessere ADD INDEX idx_tessere_evento_creazione (evento_creazione_id)");
             }
         } catch (PDOException $e) {
             // ignore
@@ -450,6 +515,150 @@ if (!function_exists('showAnimatedNotification')) {
 ";
         echo "</script>
 ";
+    }
+}
+
+/**
+ * Formatta una data in formato italiano
+ * @param string|null $date Data in formato YYYY-MM-DD o timestamp
+ * @param string $format Formato di output (default: d/m/Y)
+ * @return string Data formattata o stringa vuota
+ */
+if (!function_exists('formatDate')) {
+    function formatDate($date, $format = 'd/m/Y') {
+        if (empty($date)) {
+            return '';
+        }
+
+        try {
+            $dateTime = new DateTime($date);
+            return $dateTime->format($format);
+        } catch (Exception $e) {
+            return '';
+        }
+    }
+}
+
+/**
+ * Carica la configurazione dei campi obbligatori per un'associazione.
+ * Se la config è NULL (mai configurata), ritorna i default.
+ */
+if (!function_exists('loadRequiredFieldsConfig')) {
+    function loadRequiredFieldsConfig(PDO $pdo, string $associazione_id): array {
+        $defaults = [
+            'backend' => [
+                'telefono' => false,
+                'codice_fiscale' => false,
+                'data_nascita' => true,
+                'indirizzo' => false,
+                'citta' => false,
+                'provincia' => false,
+                'cap' => false,
+                'tipo_socio_id' => false,
+                'categoria_socio_id' => false,
+                'sede_id' => false,
+                'privacy_consenso' => false,
+                'note' => false,
+            ],
+            'preiscrizione' => [
+                'telefono' => false,
+                'codice_fiscale' => false,
+                'data_nascita' => true,
+                'indirizzo' => false,
+                'citta' => false,
+                'provincia' => false,
+                'cap' => false,
+                'tipo_socio_id' => false,
+                'categoria_socio_id' => false,
+                'privacy_consenso' => true,
+            ],
+        ];
+
+        try {
+            $stmt = $pdo->prepare("SELECT campi_obbligatori_config FROM associazioni WHERE id = ? LIMIT 1");
+            $stmt->execute([$associazione_id]);
+            $json = $stmt->fetchColumn();
+            if ($json) {
+                $saved = json_decode($json, true);
+                if (is_array($saved)) {
+                    foreach (['backend', 'preiscrizione'] as $ctx) {
+                        if (isset($saved[$ctx]) && is_array($saved[$ctx])) {
+                            foreach ($saved[$ctx] as $field => $val) {
+                                if (array_key_exists($field, $defaults[$ctx])) {
+                                    $defaults[$ctx][$field] = (bool)$val;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (PDOException $e) {
+            error_log('loadRequiredFieldsConfig: ' . $e->getMessage());
+        }
+
+        return $defaults;
+    }
+}
+
+/**
+ * Controlla se un campo è obbligatorio nel contesto dato.
+ */
+if (!function_exists('isFieldRequired')) {
+    function isFieldRequired(array $config, string $context, string $field_name): bool {
+        return !empty($config[$context][$field_name]);
+    }
+}
+
+/**
+ * Load payment gateway configuration for an association.
+ * Returns decrypted config array or null if not configured.
+ */
+if (!function_exists('loadPaymentGatewayConfig')) {
+    function loadPaymentGatewayConfig(PDO $pdo, string $associazione_id): ?array
+    {
+        try {
+            if (!tableExists($pdo, 'payment_gateway_settings')) {
+                return null;
+            }
+            $stmt = $pdo->prepare("SELECT * FROM payment_gateway_settings WHERE associazione_id = ? LIMIT 1");
+            $stmt->execute([$associazione_id]);
+            $row = $stmt->fetch();
+            if (!$row) {
+                return null;
+            }
+            // Decrypt secret keys
+            if (!empty($row['stripe_secret_key_encrypted'])) {
+                try {
+                    $row['stripe_secret_key'] = decryptValue($row['stripe_secret_key_encrypted']);
+                } catch (RuntimeException $e) {
+                    $row['stripe_secret_key'] = '';
+                }
+            } else {
+                $row['stripe_secret_key'] = '';
+            }
+            if (!empty($row['stripe_webhook_secret_encrypted'])) {
+                try {
+                    $row['stripe_webhook_secret'] = decryptValue($row['stripe_webhook_secret_encrypted']);
+                } catch (RuntimeException $e) {
+                    $row['stripe_webhook_secret'] = '';
+                }
+            } else {
+                $row['stripe_webhook_secret'] = '';
+            }
+            if (!empty($row['paypal_client_secret_encrypted'])) {
+                try {
+                    $row['paypal_client_secret'] = decryptValue($row['paypal_client_secret_encrypted']);
+                } catch (RuntimeException $e) {
+                    $row['paypal_client_secret'] = '';
+                }
+            } else {
+                $row['paypal_client_secret'] = '';
+            }
+            return $row;
+        } catch (PDOException $e) {
+            error_log('loadPaymentGatewayConfig: ' . $e->getMessage());
+            return null;
+        }
     }
 }
 

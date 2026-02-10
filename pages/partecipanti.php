@@ -1,6 +1,13 @@
 <?php
 // pages/partecipanti.php
-include 'config.php';
+
+if (!isUserLoggedIn() || !isset($_SESSION['associazione_id'])) {
+    redirect('auth/login.php');
+}
+$associazione_id = $_SESSION['associazione_id'];
+
+$message = '';
+$messageType = '';
 
 // Check if evento_id is provided
 if (!isset($_GET['evento_id'])) {
@@ -10,60 +17,49 @@ if (!isset($_GET['evento_id'])) {
 
 $evento_id = $_GET['evento_id'];
 
-// Create eventi_partecipanti table if not exists
-try {
-    $pdo->exec("CREATE TABLE IF NOT EXISTS eventi_partecipanti (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        evento_id INT NOT NULL,
-        socio_id INT NOT NULL,
-        stato_partecipazione ENUM('Confermato', 'Forse', 'Non Partecipa') DEFAULT 'Non Partecipa',
-        data_conferma TIMESTAMP,
-        note TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE KEY unique_partecipation (evento_id, socio_id)
-    )");
-} catch (PDOException $e) {
-    // Table might already exist
-}
-
 // Get event details
 try {
-    $stmt = $pdo->prepare("SELECT * FROM eventi WHERE id = ?");
-    $stmt->execute([$evento_id]);
+    $stmt = $pdo->prepare("SELECT * FROM eventi WHERE id = ? AND associazione_id = ?");
+    $stmt->execute([$evento_id, $associazione_id]);
     $evento = $stmt->fetch();
-    
+
     if (!$evento) {
         header('Location: index.php?page=eventi');
         exit;
     }
 } catch (PDOException $e) {
-    die("Error fetching event: " . $e->getMessage());
+    error_log('partecipanti.php: ' . $e->getMessage());
+    die("Errore nel recupero dati. Riprova più tardi.");
 }
 
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (isset($_POST['add_all_soci'])) {
+    if (!validateCSRFToken($_POST['csrf_token'] ?? '')) {
+        $message = "Errore di validazione. Riprova.";
+        $messageType = "error";
+    } elseif (isset($_POST['add_all_soci'])) {
         // Add all active soci to event
         try {
-            $stmt = $pdo->prepare("SELECT id FROM soci WHERE stato = 'Attivo'");
-            $stmt->execute();
+            $stmt = $pdo->prepare("SELECT id FROM soci WHERE stato = 'Attivo' AND associazione_id = ?");
+            $stmt->execute([$associazione_id]);
             $soci = $stmt->fetchAll();
-            
+
             $added = 0;
             foreach ($soci as $socio) {
                 try {
-                    $stmt = $pdo->prepare("INSERT IGNORE INTO eventi_partecipanti (evento_id, socio_id, stato_partecipazione, created_at) VALUES (?, ?, 'Non Partecipa', NOW())");
-                    $stmt->execute([$evento_id, $socio['id']]);
+                    $stmt = $pdo->prepare("INSERT IGNORE INTO eventi_partecipanti (id, associazione_id, evento_id, socio_id, stato_partecipazione, created_at) VALUES (?, ?, ?, ?, 'Non Partecipa', NOW())");
+                    $stmt->execute([generateUuid(), $associazione_id, $evento_id, $socio['id']]);
                     if ($stmt->rowCount() > 0) $added++;
                 } catch (PDOException $e) {
                     // Ignore duplicate entries
                 }
             }
-            
+
             $message = "Aggiunti $added soci all'evento!";
             $messageType = "success";
         } catch (PDOException $e) {
-            $message = "Errore durante l'aggiunta: " . $e->getMessage();
+            error_log('partecipanti.php: ' . $e->getMessage());
+            $message = "Errore. Riprova più tardi.";
             $messageType = "error";
         }
     } elseif (isset($_POST['update_partecipazione'])) {
@@ -71,14 +67,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $partecipante_id = $_POST['partecipante_id'];
         $stato = $_POST['stato_partecipazione'];
         $note = sanitizeInput($_POST['note']);
-        
+
         try {
-            $stmt = $pdo->prepare("UPDATE eventi_partecipanti SET stato_partecipazione = ?, note = ?, data_conferma = NOW() WHERE id = ?");
-            $stmt->execute([$stato, $note, $partecipante_id]);
+            $stmt = $pdo->prepare("UPDATE eventi_partecipanti SET stato_partecipazione = ?, note = ?, data_conferma = NOW() WHERE id = ? AND associazione_id = ?");
+            $stmt->execute([$stato, $note, $partecipante_id, $associazione_id]);
             $message = "Partecipazione aggiornata con successo!";
             $messageType = "success";
         } catch (PDOException $e) {
-            $message = "Errore durante l'aggiornamento: " . $e->getMessage();
+            error_log('partecipanti.php: ' . $e->getMessage());
+            $message = "Errore. Riprova più tardi.";
             $messageType = "error";
         }
     } elseif (isset($_POST['add_socio'])) {
@@ -86,26 +83,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $socio_id = $_POST['socio_id'];
         $stato = $_POST['stato_partecipazione'];
         $note = sanitizeInput($_POST['note']);
-        
+
         try {
-            $stmt = $pdo->prepare("INSERT INTO eventi_partecipanti (evento_id, socio_id, stato_partecipazione, note, data_conferma, created_at) VALUES (?, ?, ?, ?, NOW(), NOW()) ON DUPLICATE KEY UPDATE stato_partecipazione = VALUES(stato_partecipazione), note = VALUES(note), data_conferma = NOW()");
-            $stmt->execute([$evento_id, $socio_id, $stato, $note]);
+            $stmt = $pdo->prepare("INSERT INTO eventi_partecipanti (id, associazione_id, evento_id, socio_id, stato_partecipazione, note, data_conferma, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW()) ON DUPLICATE KEY UPDATE stato_partecipazione = VALUES(stato_partecipazione), note = VALUES(note), data_conferma = NOW()");
+            $stmt->execute([generateUuid(), $associazione_id, $evento_id, $socio_id, $stato, $note]);
             $message = "Socio aggiunto all'evento!";
             $messageType = "success";
         } catch (PDOException $e) {
-            $message = "Errore durante l'aggiunta: " . $e->getMessage();
+            error_log('partecipanti.php: ' . $e->getMessage());
+            $message = "Errore. Riprova più tardi.";
             $messageType = "error";
         }
     } elseif (isset($_POST['remove_partecipante'])) {
         // Remove participant
         $partecipante_id = $_POST['remove_partecipante'];
         try {
-            $stmt = $pdo->prepare("DELETE FROM eventi_partecipanti WHERE id = ?");
-            $stmt->execute([$partecipante_id]);
+            $stmt = $pdo->prepare("DELETE FROM eventi_partecipanti WHERE id = ? AND associazione_id = ?");
+            $stmt->execute([$partecipante_id, $associazione_id]);
             $message = "Partecipante rimosso dall'evento!";
             $messageType = "success";
         } catch (PDOException $e) {
-            $message = "Errore durante la rimozione: " . $e->getMessage();
+            error_log('partecipanti.php: ' . $e->getMessage());
+            $message = "Errore. Riprova più tardi.";
             $messageType = "error";
         }
     }
@@ -114,54 +113,61 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // Get participants list
 try {
     $statusFilter = $_GET['status'] ?? 'all';
-    
-    $sql = "SELECT ep.*, CONCAT(s.nome, ' ', s.cognome) as socio_name, s.numero_socio, s.email, s.telefono 
-            FROM eventi_partecipanti ep 
-            JOIN soci s ON ep.socio_id = s.id 
-            WHERE ep.evento_id = ?";
-    $params = [$evento_id];
-    
+
+    $sql = "SELECT ep.*, CONCAT(s.nome, ' ', s.cognome) as socio_name, s.numero_socio, s.email, s.telefono
+            FROM eventi_partecipanti ep
+            JOIN soci s ON ep.socio_id = s.id
+            WHERE ep.evento_id = ? AND ep.associazione_id = ?";
+    $params = [$evento_id, $associazione_id];
+
     if ($statusFilter !== 'all') {
         $sql .= " AND ep.stato_partecipazione = ?";
         $params[] = $statusFilter;
     }
-    
+
     $sql .= " ORDER BY s.cognome, s.nome";
-    
+
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
     $partecipanti = $stmt->fetchAll();
-    
+
     // Get soci not yet added to this event
     $stmt = $pdo->prepare("
-        SELECT s.id, CONCAT(s.nome, ' ', s.cognome, ' (', s.numero_socio, ')') as nome_completo 
-        FROM soci s 
-        WHERE s.stato = 'Attivo' 
+        SELECT s.id, CONCAT(s.nome, ' ', s.cognome, ' (', s.numero_socio, ')') as nome_completo
+        FROM soci s
+        WHERE s.stato = 'Attivo'
+        AND s.associazione_id = ?
         AND s.id NOT IN (
-            SELECT ep.socio_id 
-            FROM eventi_partecipanti ep 
+            SELECT ep.socio_id
+            FROM eventi_partecipanti ep
             WHERE ep.evento_id = ?
-        ) 
+        )
         ORDER BY s.cognome, s.nome
     ");
-    $stmt->execute([$evento_id]);
+    $stmt->execute([$associazione_id, $evento_id]);
     $sociDisponibili = $stmt->fetchAll();
-    
+
     // Statistics
     $confermati = count(array_filter($partecipanti, function($p) { return $p['stato_partecipazione'] === 'Confermato'; }));
     $forse = count(array_filter($partecipanti, function($p) { return $p['stato_partecipazione'] === 'Forse'; }));
     $nonPartecipa = count(array_filter($partecipanti, function($p) { return $p['stato_partecipazione'] === 'Non Partecipa'; }));
-    
+
+    // Count tessere create at this event
+    $stmt_tc = $pdo->prepare("SELECT COUNT(*) FROM tessere WHERE evento_creazione_id = ? AND associazione_id = ?");
+    $stmt_tc->execute([$evento_id, $associazione_id]);
+    $tessere_create_evento = (int)$stmt_tc->fetchColumn();
+
 } catch (PDOException $e) {
-    die("Error fetching participants: " . $e->getMessage());
+    error_log('partecipanti.php fetch: ' . $e->getMessage());
+    die("Errore nel recupero dati. Riprova più tardi.");
 }
 ?>
 
 <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
     <div>
-        <h1 class="h2">Partecipanti: <?php echo htmlspecialchars($evento['title']); ?></h1>
+        <h1 class="h2">Partecipanti: <?php echo htmlspecialchars($evento['titolo']); ?></h1>
         <p class="text-muted">
-            <i class="bi bi-calendar"></i> <?php echo formatDate($evento['date']); ?>
+            <i class="bi bi-calendar"></i> <?php echo formatDate($evento['data_evento']); ?>
             <span class="ms-3">
                 <a href="index.php?page=eventi" class="btn btn-outline-secondary btn-sm">
                     <i class="bi bi-arrow-left"></i> Torna agli Eventi
@@ -171,9 +177,9 @@ try {
     </div>
 </div>
 
-<?php if (isset($message)): ?>
+<?php if (!empty($message)): ?>
     <div class="alert alert-<?php echo $messageType === 'success' ? 'success' : 'danger'; ?> alert-dismissible fade show" role="alert">
-        <?php echo $message; ?>
+        <?php echo htmlspecialchars($message); ?>
         <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
     </div>
 <?php endif; ?>
@@ -212,6 +218,16 @@ try {
             </div>
         </div>
     </div>
+    <?php if ($tessere_create_evento > 0): ?>
+    <div class="col-md-6 col-lg-3 mt-3">
+        <div class="card border-primary">
+            <div class="card-body text-center">
+                <h5 class="card-title text-primary"><i class="bi bi-credit-card me-1"></i>Tessere create</h5>
+                <h2 class="display-6"><?php echo $tessere_create_evento; ?></h2>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
 </div>
 
 <div class="d-flex justify-content-between mb-3">
@@ -221,6 +237,7 @@ try {
         </button>
         <?php if (count($sociDisponibili) > 0): ?>
             <form method="POST" class="d-inline ms-2">
+                <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                 <input type="hidden" name="add_all_soci" value="1">
                 <button type="submit" class="btn btn-outline-primary" onclick="return confirm('Aggiungere tutti i soci attivi a questo evento?')">
                     <i class="bi bi-people"></i> Aggiungi Tutti i Soci
@@ -230,10 +247,10 @@ try {
     </div>
     <div>
         <div class="btn-group" role="group">
-            <a href="index.php?page=partecipanti&evento_id=<?php echo $evento_id; ?>&status=all" class="btn btn-<?php echo $statusFilter === 'all' ? 'primary' : 'outline-primary'; ?>">Tutti</a>
-            <a href="index.php?page=partecipanti&evento_id=<?php echo $evento_id; ?>&status=Confermato" class="btn btn-<?php echo $statusFilter === 'Confermato' ? 'success' : 'outline-success'; ?>">Confermati</a>
-            <a href="index.php?page=partecipanti&evento_id=<?php echo $evento_id; ?>&status=Forse" class="btn btn-<?php echo $statusFilter === 'Forse' ? 'warning' : 'outline-warning'; ?>">Forse</a>
-            <a href="index.php?page=partecipanti&evento_id=<?php echo $evento_id; ?>&status=Non Partecipa" class="btn btn-<?php echo $statusFilter === 'Non Partecipa' ? 'danger' : 'outline-danger'; ?>">Non Partecipa</a>
+            <a href="index.php?page=partecipanti&evento_id=<?php echo htmlspecialchars($evento_id, ENT_QUOTES); ?>&status=all" class="btn btn-<?php echo $statusFilter === 'all' ? 'primary' : 'outline-primary'; ?>">Tutti</a>
+            <a href="index.php?page=partecipanti&evento_id=<?php echo htmlspecialchars($evento_id, ENT_QUOTES); ?>&status=Confermato" class="btn btn-<?php echo $statusFilter === 'Confermato' ? 'success' : 'outline-success'; ?>">Confermati</a>
+            <a href="index.php?page=partecipanti&evento_id=<?php echo htmlspecialchars($evento_id, ENT_QUOTES); ?>&status=Forse" class="btn btn-<?php echo $statusFilter === 'Forse' ? 'warning' : 'outline-warning'; ?>">Forse</a>
+            <a href="index.php?page=partecipanti&evento_id=<?php echo htmlspecialchars($evento_id, ENT_QUOTES); ?>&status=Non Partecipa" class="btn btn-<?php echo $statusFilter === 'Non Partecipa' ? 'danger' : 'outline-danger'; ?>">Non Partecipa</a>
         </div>
     </div>
 </div>
@@ -300,20 +317,21 @@ try {
                                 <?php endif; ?>
                             </td>
                             <td class="text-end">
-                                <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editModal<?php echo $partecipante['id']; ?>">
+                                <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editModal<?php echo htmlspecialchars($partecipante['id'], ENT_QUOTES); ?>">
                                     <i class="bi bi-pencil"></i> Modifica
                                 </button>
                                 <form method="POST" class="d-inline" onsubmit="return confirm('Rimuovere questo partecipante?')">
-                                    <input type="hidden" name="remove_partecipante" value="<?php echo $partecipante['id']; ?>">
+                                    <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
+                                    <input type="hidden" name="remove_partecipante" value="<?php echo htmlspecialchars($partecipante['id'], ENT_QUOTES); ?>">
                                     <button type="submit" class="btn btn-sm btn-outline-danger">
                                         <i class="bi bi-trash"></i> Rimuovi
                                     </button>
                                 </form>
                             </td>
                         </tr>
-                        
+
                         <!-- Edit Modal for each participant -->
-                        <div class="modal fade" id="editModal<?php echo $partecipante['id']; ?>" tabindex="-1">
+                        <div class="modal fade" id="editModal<?php echo htmlspecialchars($partecipante['id'], ENT_QUOTES); ?>" tabindex="-1">
                             <div class="modal-dialog">
                                 <div class="modal-content">
                                     <div class="modal-header">
@@ -322,9 +340,10 @@ try {
                                     </div>
                                     <form method="POST">
                                         <div class="modal-body">
+                                            <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                                             <input type="hidden" name="update_partecipazione" value="1">
-                                            <input type="hidden" name="partecipante_id" value="<?php echo $partecipante['id']; ?>">
-                                            
+                                            <input type="hidden" name="partecipante_id" value="<?php echo htmlspecialchars($partecipante['id'], ENT_QUOTES); ?>">
+
                                             <div class="mb-3">
                                                 <label class="form-label">Stato Partecipazione</label>
                                                 <select class="form-select" name="stato_partecipazione" required>
@@ -333,7 +352,7 @@ try {
                                                     <option value="Non Partecipa" <?php echo $partecipante['stato_partecipazione'] === 'Non Partecipa' ? 'selected' : ''; ?>>Non Partecipa</option>
                                                 </select>
                                             </div>
-                                            
+
                                             <div class="mb-3">
                                                 <label class="form-label">Note</label>
                                                 <textarea class="form-control" name="note" rows="3"><?php echo htmlspecialchars($partecipante['note']); ?></textarea>
@@ -341,7 +360,7 @@ try {
                                         </div>
                                         <div class="modal-footer">
                                             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button>
-                                            <button type="submit" class="btn btn-primary">Aggiorna</button>
+                                            <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg me-1"></i>Aggiorna</button>
                                         </div>
                                     </form>
                                 </div>
@@ -364,14 +383,15 @@ try {
             </div>
             <form method="POST">
                 <div class="modal-body">
+                    <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
                     <input type="hidden" name="add_socio" value="1">
-                    
+
                     <div class="mb-3">
                         <label class="form-label">Socio</label>
                         <select class="form-select" name="socio_id" required>
                             <option value="">Seleziona un socio</option>
                             <?php foreach ($sociDisponibili as $socio): ?>
-                                <option value="<?php echo $socio['id']; ?>">
+                                <option value="<?php echo htmlspecialchars($socio['id'], ENT_QUOTES); ?>">
                                     <?php echo htmlspecialchars($socio['nome_completo']); ?>
                                 </option>
                             <?php endforeach; ?>
@@ -380,7 +400,7 @@ try {
                             <div class="form-text text-muted">Tutti i soci attivi sono già stati aggiunti a questo evento.</div>
                         <?php endif; ?>
                     </div>
-                    
+
                     <div class="mb-3">
                         <label class="form-label">Stato Partecipazione</label>
                         <select class="form-select" name="stato_partecipazione" required>
@@ -389,7 +409,7 @@ try {
                             <option value="Confermato">Confermato</option>
                         </select>
                     </div>
-                    
+
                     <div class="mb-3">
                         <label class="form-label">Note</label>
                         <textarea class="form-control" name="note" rows="3"></textarea>
@@ -397,7 +417,7 @@ try {
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button>
-                    <button type="submit" class="btn btn-primary" <?php echo count($sociDisponibili) === 0 ? 'disabled' : ''; ?>>Aggiungi</button>
+                    <button type="submit" class="btn btn-primary" <?php echo count($sociDisponibili) === 0 ? 'disabled' : ''; ?>><i class="bi bi-plus-lg me-1"></i>Aggiungi</button>
                 </div>
             </form>
         </div>

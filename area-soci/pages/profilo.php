@@ -11,6 +11,10 @@ $messageType = '';
 
 // Gestione aggiornamento profilo
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!validateCSRFToken($_POST['csrf_token'] ?? '')) {
+        $message = "Errore di sicurezza: token CSRF non valido.";
+        $messageType = "danger";
+    } else {
     $socio_id = $socio_loggato['id'];
     $telefono = sanitizeInput($_POST['telefono']);
     $indirizzo = sanitizeInput($_POST['indirizzo']);
@@ -30,8 +34,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $socio_loggato['cap'] = $cap;
 
     } catch (PDOException $e) {
-        $message = "Errore durante l'aggiornamento del profilo: " . $e->getMessage();
+        error_log('profilo.php PDOException: ' . $e->getMessage());
+        $message = "Errore durante l'aggiornamento del profilo. Riprova più tardi.";
         $messageType = "danger";
+    }
     }
 }
 
@@ -51,13 +57,14 @@ $tags = $stmt_tags->fetchAll();
 </div>
 
 <?php if ($message): ?>
-<div class="alert alert-<?php echo $messageType; ?>"><?php echo $message; ?></div>
+<div class="alert alert-<?php echo htmlspecialchars($messageType); ?>"><?php echo htmlspecialchars($message); ?></div>
 <?php endif; ?>
 
 <div class="card mb-4">
     <div class="card-header"><h5>Dati Anagrafici</h5></div>
     <div class="card-body">
         <form method="POST">
+            <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
             <div class="row g-3">
                 <div class="col-md-6"><label class="form-label">Nome</label><input type="text" class="form-control" value="<?php echo htmlspecialchars($socio_loggato['nome']); ?>" disabled></div>
                 <div class="col-md-6"><label class="form-label">Cognome</label><input type="text" class="form-control" value="<?php echo htmlspecialchars($socio_loggato['cognome']); ?>" disabled></div>
@@ -75,7 +82,7 @@ $tags = $stmt_tags->fetchAll();
                 <div class="col-md-4"><label class="form-label">Città</label><input type="text" name="citta" class="form-control" value="<?php echo htmlspecialchars($socio_loggato['citta'] ?? ''); ?>"></div>
                 <div class="col-md-2"><label class="form-label">CAP</label><input type="text" name="cap" class="form-control" value="<?php echo htmlspecialchars($socio_loggato['cap'] ?? ''); ?>"></div>
             </div>
-            <button type="submit" class="btn btn-primary mt-3">Salva Modifiche</button>
+            <button type="submit" class="btn btn-primary mt-3"><i class="bi bi-floppy me-1"></i>Salva Modifiche</button>
         </form>
     </div>
 </div>
@@ -93,7 +100,7 @@ $tags = $stmt_tags->fetchAll();
         <h6 class="mt-4">I Miei Tag:</h6>
         <div class="d-flex flex-wrap gap-2">
             <?php foreach ($tags as $tag): ?>
-                <span class="badge" style="background-color: <?php echo $tag['colore']; ?>; color: white;"><?php echo htmlspecialchars($tag['nome_tag']); ?></span>
+                <span class="badge" style="background-color: <?php echo htmlspecialchars($tag['colore']); ?>; color: white;"><?php echo htmlspecialchars($tag['nome_tag']); ?></span>
             <?php endforeach; ?>
         </div>
         <?php endif; ?>

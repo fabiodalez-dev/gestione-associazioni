@@ -68,5 +68,6 @@ try {
 
 } catch (PDOException $e) {
     http_response_code(500);
-    echo json_encode(['error' => 'Errore database: ' . $e->getMessage()]);
+    error_log('notifications.php PDOException: ' . $e->getMessage());
+    echo json_encode(['error' => 'Errore database. Riprova più tardi.']);
 }

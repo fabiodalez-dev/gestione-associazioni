@@ -14,10 +14,17 @@ if (!$tessera_id) {
     die('ID Tessera non specificato.');
 }
 
+// Load Composer autoload and QR helper
+$autoloadPath = __DIR__ . '/../vendor/autoload.php';
+if (file_exists($autoloadPath)) {
+    require_once $autoloadPath;
+}
+require_once __DIR__ . '/../includes/qrcode_helper.php';
+
 // Recupera i dati della tessera, del socio e dell'associazione
 $sql = "
-    SELECT 
-        t.numero_tessera, t.anno_validita, t.data_emissione, t.data_scadenza,
+    SELECT
+        t.id as tessera_id, t.numero_tessera, t.anno_validita, t.data_emissione, t.data_scadenza,
         s.nome as socio_nome, s.cognome as socio_cognome, s.data_nascita,
         a.nome as associazione_nome, a.logo_url
     FROM tessere t
@@ -34,6 +41,9 @@ if (!$data) {
     http_response_code(404);
     die('Tessera non trovata o non appartenente a questa associazione.');
 }
+
+// Generate QR code data URI
+$qr_data_uri = generateQrDataUri(buildTesseraVerificationUrl($data['tessera_id']), 3);
 
 ?>
 <!DOCTYPE html>
@@ -123,11 +133,11 @@ if (!$data) {
             color: #999;
             margin-top: auto;
         }
-        .qr-code-placeholder {
-            width: 40px;
-            height: 40px;
-            background-color: #333;
+        .qr-code {
+            width: 50px;
+            height: 50px;
             margin-left: auto;
+            object-fit: contain;
         }
 
         @media print {
@@ -159,14 +169,15 @@ if (!$data) {
                 <p><strong>Validità:</strong> <?php echo htmlspecialchars($data['anno_validita']); ?></p>
                 <p><strong>Scadenza:</strong> <?php echo date('d/m/Y', strtotime($data['data_scadenza'])); ?></p>
             </div>
-            <div class="qr-code-placeholder"></div>
+            <img class="qr-code" src="<?php echo htmlspecialchars($qr_data_uri); ?>" alt="QR Verifica">
         </div>
         <div class="card-footer">
             Tessera Associativa Personale
         </div>
     </div>
 
-    <button class="no-print" onclick="window.print()" style="position: fixed; top: 20px; right: 20px; padding: 10px 20px; cursor: pointer;">Stampa</button>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <button class="no-print" onclick="window.print()" style="position: fixed; top: 20px; right: 20px; padding: 8px 20px; cursor: pointer; background-color: #FF7B11; color: #fff; border: none; border-radius: 6px; font-family: 'Inter', sans-serif; font-size: 0.9rem; font-weight: 600; box-shadow: 0 2px 8px rgba(255,123,17,0.3);"><i class="bi bi-printer me-1"></i> Stampa</button>
 
 </body>
 </html>

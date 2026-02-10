@@ -4,26 +4,10 @@
 if (!isUserLoggedIn(['admin_associazione', 'super_admin'])) {
     redirect('auth/login.php');
 }
-
-// Per super_admin, permetti selezione associazione
-if ($_SESSION['user_role'] === 'super_admin') {
-    $associazione_id = $_GET['assoc_id'] ?? null;
-    if (!$associazione_id) {
-        // Mostra selezione associazione
-        $stmt = $pdo->query("SELECT id, nome FROM associazioni WHERE attiva = 1 ORDER BY nome");
-        $associazioni = $stmt->fetchAll();
-        
-        if (empty($associazioni)) {
-            $error = "Nessuna associazione trovata. Crea prima un'associazione.";
-        }
-    }
-} else {
-    // Per altri ruoli, usa l'associazione dalla sessione
-    if (!isset($_SESSION['associazione_id'])) {
-        redirect('auth/login.php');
-    }
-    $associazione_id = $_SESSION['associazione_id'];
+if (!isset($_SESSION['associazione_id'])) {
+    redirect('index.php?page=dashboard');
 }
+$associazione_id = $_SESSION['associazione_id'];
 $message = '';
 $messageType = '';
 
@@ -62,29 +46,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $message = "$added_count campi aggiunti con successo.";
         $messageType = "success";
     } else {
-        $id = $_POST['id'] ?? null;
-        $nome_campo = sanitizeInput($_POST['nome_campo']);
-        $tipo_campo = sanitizeInput($_POST['tipo_campo']);
-        $descrizione = sanitizeInput($_POST['descrizione'] ?? '');
-        $opzioni = sanitizeInput($_POST['opzioni'] ?? '');
-        $obbligatorio = isset($_POST['obbligatorio']) ? 1 : 0;
-
         if (isset($_POST['delete_id'])) {
-        $stmt = $pdo->prepare("DELETE FROM campi_personalizzati WHERE id = ? AND associazione_id = ?");
-        $stmt->execute([$_POST['delete_id'], $associazione_id]);
-        $message = "Campo eliminato con successo.";
-        $messageType = "success";
-    } elseif ($id) {
-        $stmt = $pdo->prepare("UPDATE campi_personalizzati SET nome_campo=?, tipo_campo=?, descrizione=?, opzioni=?, obbligatorio=? WHERE id=? AND associazione_id=?");
-        $stmt->execute([$nome_campo, $tipo_campo, $descrizione, $opzioni, $obbligatorio, $id, $associazione_id]);
-        $message = "Campo aggiornato con successo.";
-        $messageType = "success";
-    } else {
-        $new_id = generateUuid();
-        $stmt = $pdo->prepare("INSERT INTO campi_personalizzati (id, associazione_id, nome_campo, tipo_campo, descrizione, opzioni, obbligatorio) VALUES (?, ?, ?, ?, ?, ?, ?)");
-        $stmt->execute([$new_id, $associazione_id, $nome_campo, $tipo_campo, $descrizione, $opzioni, $obbligatorio]);
-        $message = "Campo creato con successo.";
-        $messageType = "success";
+            $stmt = $pdo->prepare("DELETE FROM campi_personalizzati WHERE id = ? AND associazione_id = ?");
+            $stmt->execute([$_POST['delete_id'], $associazione_id]);
+            $message = "Campo eliminato con successo.";
+            $messageType = "success";
+        } else {
+            $id = $_POST['id'] ?? null;
+            $nome_campo = sanitizeInput($_POST['nome_campo'] ?? '');
+            $tipo_campo = sanitizeInput($_POST['tipo_campo'] ?? '');
+            $descrizione = sanitizeInput($_POST['descrizione'] ?? '');
+            $opzioni = sanitizeInput($_POST['opzioni'] ?? '');
+            $obbligatorio = isset($_POST['obbligatorio']) ? 1 : 0;
+
+            if ($id) {
+                $stmt = $pdo->prepare("UPDATE campi_personalizzati SET nome_campo=?, tipo_campo=?, descrizione=?, opzioni=?, obbligatorio=? WHERE id=? AND associazione_id=?");
+                $stmt->execute([$nome_campo, $tipo_campo, $descrizione, $opzioni, $obbligatorio, $id, $associazione_id]);
+                $message = "Campo aggiornato con successo.";
+                $messageType = "success";
+            } else {
+                $new_id = generateUuid();
+                $stmt = $pdo->prepare("INSERT INTO campi_personalizzati (id, associazione_id, nome_campo, tipo_campo, descrizione, opzioni, obbligatorio) VALUES (?, ?, ?, ?, ?, ?, ?)");
+                $stmt->execute([$new_id, $associazione_id, $nome_campo, $tipo_campo, $descrizione, $opzioni, $obbligatorio]);
+                $message = "Campo creato con successo.";
+                $messageType = "success";
+            }
         }
     }
     }
@@ -116,38 +102,9 @@ $campi = $stmt_campi->fetchAll();
     </div>
 </div>
 
-<?php if ($_SESSION['user_role'] === 'super_admin' && !$associazione_id): ?>
-    <div class="card mb-4">
-        <div class="card-header">
-            <h5 class="mb-0"><i class="bi bi-building"></i> Seleziona Associazione</h5>
-        </div>
-        <div class="card-body">
-            <?php if (isset($error)): ?>
-                <div class="alert alert-warning"><?php echo $error; ?></div>
-            <?php endif; ?>
-            
-            <?php if (!empty($associazioni)): ?>
-                <p>Seleziona l'associazione per configurare i campi personalizzati:</p>
-                <div class="row">
-                    <?php foreach ($associazioni as $assoc): ?>
-                        <div class="col-md-6 mb-3">
-                            <div class="card border">
-                                <div class="card-body">
-                                    <h6 class="card-title"><?php echo htmlspecialchars($assoc['nome']); ?></h6>
-                                    <a href="?page=config_campi&assoc_id=<?php echo urlencode($assoc['id']); ?>" 
-                                       class="btn btn-primary">Configura Campi</a>
-                                </div>
-                            </div>
-                        </div>
-                    <?php endforeach; ?>
-                </div>
-            <?php endif; ?>
-        </div>
-    </div>
-<?php else: ?>
 
 <?php if ($message): ?>
-<div class="alert alert-<?php echo $messageType; ?>"><?php echo $message; ?></div>
+<div class="alert alert-<?php echo htmlspecialchars($messageType); ?>"><?php echo htmlspecialchars($message); ?></div>
 <?php endif; ?>
 
 <div class="d-flex justify-content-between mb-3">
@@ -166,8 +123,8 @@ $campi = $stmt_campi->fetchAll();
                     <td><small class="text-muted"><?php echo htmlspecialchars($campo['descrizione'] ?? ''); ?></small></td>
                     <td><?php echo $campo['obbligatorio'] ? '<span class="badge bg-success">Sì</span>' : '<span class="badge bg-light text-dark">No</span>'; ?></td>
                     <td class="text-end">
-                        <a href="index.php?page=config_campi&edit=<?php echo $campo['id']; ?>" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil"></i></a>
-                        <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questo campo? Verranno persi tutti i dati associati.')"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="delete_id" value="<?php echo $campo['id']; ?>"><button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button></form>
+                        <a href="index.php?page=config_campi&edit=<?php echo htmlspecialchars($campo['id']); ?>" class="btn btn-sm btn-outline-primary"><i class="bi bi-pencil"></i></a>
+                        <form method="POST" class="d-inline" onsubmit="return confirm('Eliminare questo campo? Verranno persi tutti i dati associati.')"><input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>"><input type="hidden" name="delete_id" value="<?php echo htmlspecialchars($campo['id']); ?>"><button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button></form>
                     </td>
                 </tr>
             <?php endforeach; ?>
@@ -183,7 +140,7 @@ $campi = $stmt_campi->fetchAll();
     <form method="POST">
         <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
         <div class="modal-body">
-            <input type="hidden" name="id" value="<?php echo $editingField['id'] ?? ''; ?>">
+            <input type="hidden" name="id" value="<?php echo htmlspecialchars($editingField['id'] ?? ''); ?>">
             <div class="mb-3"><label>Nome Campo</label><input type="text" name="nome_campo" class="form-control" value="<?php echo htmlspecialchars($editingField['nome_campo'] ?? ''); ?>" required></div>
             <div class="mb-3">
                 <label>Tipo Campo</label>
@@ -215,7 +172,7 @@ $campi = $stmt_campi->fetchAll();
         </div>
         <div class="modal-footer">
             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annulla</button>
-            <button type="submit" class="btn btn-primary">Salva</button>
+            <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg me-1"></i>Salva</button>
         </div>
     </form>
 </div></div>
@@ -289,6 +246,4 @@ document.addEventListener('DOMContentLoaded', function() {
 
 <?php if ($editingField): ?>
 <script>document.addEventListener('DOMContentLoaded', () => new bootstrap.Modal(document.getElementById('fieldModal')).show());</script>
-<?php endif; ?>
-
 <?php endif; ?>

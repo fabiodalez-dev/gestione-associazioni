@@ -55,7 +55,7 @@ try {
                 WHERE 1=1";
         $params = [];
         $assoc_id_filter = $_GET['assoc_id'] ?? null;
-        if ($assoc_id_filter && $assoc_id_filter !== 'all') {
+        if ($assoc_id_filter && $assoc_id_filter !== 'all' && ($_SESSION['user_role'] ?? '') === 'super_admin') {
             $sql .= " AND s.associazione_id = ?";
             $params[] = $assoc_id_filter;
         } else {
@@ -117,7 +117,7 @@ try {
                 WHERE 1=1";
         $params = [];
         $assoc_id_filter = $_GET['assoc_id'] ?? null;
-        if ($assoc_id_filter && $assoc_id_filter !== 'all') {
+        if ($assoc_id_filter && $assoc_id_filter !== 'all' && ($_SESSION['user_role'] ?? '') === 'super_admin') {
             $sql .= " AND t.associazione_id = ?";
             $params[] = $assoc_id_filter;
         } else {
@@ -161,8 +161,8 @@ try {
     }
 
 } catch (PDOException $e) {
-    // In un'app di produzione, loggare l'errore invece di mostrarlo
-    die('Errore database: ' . $e->getMessage());
+    error_log('export.php PDOException: ' . $e->getMessage());
+    die('Errore database. Riprova più tardi.');
 }
 
 fclose($output);

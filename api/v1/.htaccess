@@ -1,0 +1,19 @@
+# API v1 - URL Rewriting
+# Routes all requests to index.php for centralized routing
+
+RewriteEngine On
+
+# If the request is not for an existing file or directory, route to index.php
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ index.php/$1 [QSA,L]
+
+# Allow Authorization header to pass through
+SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1
+
+# CORS preflight
+<IfModule mod_headers.c>
+    Header always set Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
+    Header always set Access-Control-Allow-Headers "Authorization, Content-Type, Accept"
+    Header always set Access-Control-Max-Age "3600"
+</IfModule>

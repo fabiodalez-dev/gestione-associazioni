@@ -5,6 +5,13 @@ if (!isUserLoggedIn() || !isset($_SESSION['associazione_id'])) {
     redirect('auth/login.php');
 }
 
+// Load Composer autoload and QR helper
+$autoloadPath = __DIR__ . '/../vendor/autoload.php';
+if (file_exists($autoloadPath)) {
+    require_once $autoloadPath;
+}
+require_once __DIR__ . '/../includes/qrcode_helper.php';
+
 $associazione_id = $_SESSION['associazione_id'];
 $socio_id = $_GET['id'] ?? null;
 $message = '';
@@ -93,7 +100,7 @@ $storico = $stmt_storico->fetchAll();
         </div>
         <div class="ms-auto">
             <?php foreach ($tags as $tag): ?>
-                <span class="badge fs-6 me-1" style="background-color: <?php echo $tag['colore']; ?>; color: white;"><?php echo htmlspecialchars($tag['nome_tag']); ?></span>
+                <span class="badge fs-6 me-1" style="background-color: <?php echo htmlspecialchars($tag['colore'], ENT_QUOTES, 'UTF-8'); ?>; color: white;"><?php echo htmlspecialchars($tag['nome_tag']); ?></span>
             <?php endforeach; ?>
         </div>
     </div>
@@ -110,8 +117,8 @@ $storico = $stmt_storico->fetchAll();
     <div class="tab-pane fade show active" id="anagrafica" role="tabpanel"><div class="card mt-3"><div class="card-body row g-3">
         <div class="col-md-6"><strong>Email:</strong><p><?php echo htmlspecialchars($socio['email']); ?></p></div>
         <div class="col-md-6"><strong>Telefono:</strong><p><?php echo htmlspecialchars($socio['telefono'] ?? 'N/D'); ?></p></div>
-        <div class="col-md-6"><strong>Data di Nascita:</strong><p><?php echo date('d/m/Y', strtotime($socio['data_nascita'])); ?></p></div>
-        <div class="col-md-6"><strong>Data Iscrizione:</strong><p><?php echo date('d/m/Y', strtotime($socio['data_iscrizione'])); ?></p></div>
+        <div class="col-md-6"><strong>Data di Nascita:</strong><p><?php echo $socio['data_nascita'] ? date('d/m/Y', strtotime($socio['data_nascita'])) : 'N/D'; ?></p></div>
+        <div class="col-md-6"><strong>Data Iscrizione:</strong><p><?php echo $socio['data_iscrizione'] ? date('d/m/Y', strtotime($socio['data_iscrizione'])) : 'N/D'; ?></p></div>
         <div class="col-md-6"><strong>Stato:</strong><p><span class="badge bg-success"><?php echo htmlspecialchars($socio['stato']); ?></span></p></div>
         <?php foreach ($campi_valorizzati as $cv): ?>
         <div class="col-md-6"><strong><?php echo htmlspecialchars($cv['nome_campo']); ?>:</strong><p><?php echo htmlspecialchars($cv['valore']); ?></p></div>
@@ -119,18 +126,33 @@ $storico = $stmt_storico->fetchAll();
     </div></div></div>
 
     <div class="tab-pane fade" id="quote-tessere" role="tabpanel">
-        <div class="card mt-3"><div class="card-header"><h5>Quote</h5></div><div class="card-body"><table class="table table-sm"><thead><tr><th>Anno</th><th>Importo</th><th>Stato</th><th>Data Pagamento</th></tr></thead><tbody>
+        <div class="card mt-3"><div class="card-header"><h5>Quote</h5></div><div class="card-body"><div class="table-responsive"><table class="table table-sm"><thead><tr><th>Anno</th><th>Importo</th><th>Stato</th><th>Data Pagamento</th></tr></thead><tbody>
         <?php foreach($quote as $q): ?><tr><td><?php echo $q['anno']; ?></td><td>€<?php echo $q['importo']; ?></td><td><?php echo $q['stato']; ?></td><td><?php echo $q['data_pagamento'] ? date('d/m/Y', strtotime($q['data_pagamento'])) : '-'; ?></td></tr><?php endforeach; ?>
-        </tbody></table></div></div>
-        <div class="card mt-3"><div class="card-header"><h5>Tessere</h5></div><div class="card-body"><table class="table table-sm"><thead><tr><th>Numero</th><th>Anno</th><th>Scadenza</th><th>Stato</th><th>Costo</th></tr></thead><tbody>
-        <?php 
+        </tbody></table></div></div></div>
+        <div class="card mt-3"><div class="card-header"><h5>Tessere</h5></div><div class="card-body"><div class="table-responsive"><table class="table table-sm"><thead><tr><th>Numero</th><th>Anno</th><th>Scadenza</th><th>Stato</th><th>Costo</th><th>QR</th></tr></thead><tbody>
+        <?php
         // Calcola il costo per ogni tessera: override del tipo socio o default associazione
         $stmt_cost = $pdo->prepare("SELECT ts.costo_tessera as tipo_costo, a.costo_tessera as assoc_costo FROM soci s LEFT JOIN tipi_socio ts ON s.tipo_socio_id = ts.id LEFT JOIN associazioni a ON s.associazione_id = a.id WHERE s.id = ? AND s.associazione_id = ? LIMIT 1");
         $stmt_cost->execute([$socio_id, $associazione_id]);
         $costRow = $stmt_cost->fetch() ?: [];
-        $baseCost = isset($costRow['tipo_costo']) && $costRow['tipo_costo'] !== null ? (float)$costRow['tipo_costo'] : (isset($costRow['assoc_costo']) && $costRow['assoc_costo'] !== null ? (float)$costRow['assoc_costo'] : null);
-        foreach($tessere as $t): ?><tr><td><?php echo $t['numero_tessera']; ?></td><td><?php echo $t['anno_validita']; ?></td><td><?php echo date('d/m/Y', strtotime($t['data_scadenza'])); ?></td><td><?php echo $t['stato']; ?></td><td><?php echo $baseCost !== null ? '€ ' . number_format($baseCost, 2, ',', '.') : '—'; ?></td></tr><?php endforeach; ?>
-        </tbody></table></div></div>
+        $baseCost = isset($costRow['tipo_costo']) ? (float)$costRow['tipo_costo'] : (isset($costRow['assoc_costo']) ? (float)$costRow['assoc_costo'] : null);
+        $qr_modals = [];
+        foreach($tessere as $t):
+            $qr_uri = generateQrDataUri(buildTesseraVerificationUrl($t['id']), 3);
+            $qr_uri_lg = generateQrDataUri(buildTesseraVerificationUrl($t['id']), 6);
+            $qr_modals[] = ['id' => $t['id'], 'uri_lg' => $qr_uri_lg, 'numero' => $t['numero_tessera']];
+        ?><tr><td><?php echo htmlspecialchars($t['numero_tessera']); ?></td><td><?php echo htmlspecialchars($t['anno_validita']); ?></td><td><?php echo date('d/m/Y', strtotime($t['data_scadenza'])); ?></td><td><?php echo htmlspecialchars($t['stato']); ?></td><td><?php echo $baseCost !== null ? '€ ' . number_format($baseCost, 2, ',', '.') : '—'; ?></td><td><img src="<?php echo htmlspecialchars($qr_uri); ?>" alt="QR" style="width:36px;height:36px;cursor:pointer;" onclick="document.getElementById('qrModal<?php echo htmlspecialchars($t['id']); ?>').style.display='flex'"></td></tr>
+        <?php endforeach; ?>
+        </tbody></table></div></div></div>
+        <?php foreach($qr_modals as $qm): ?>
+        <div id="qrModal<?php echo htmlspecialchars($qm['id']); ?>" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:9999;align-items:center;justify-content:center;" onclick="this.style.display='none'">
+            <div style="background:#fff;border-radius:12px;padding:24px;text-align:center;max-width:90vw;" onclick="event.stopPropagation()">
+                <img src="<?php echo htmlspecialchars($qm['uri_lg']); ?>" alt="QR Code" style="width:200px;height:200px;max-width:70vw;max-height:70vw;">
+                <p class="mt-2 mb-0 text-muted small">Tessera <?php echo htmlspecialchars($qm['numero']); ?></p>
+                <button class="btn btn-sm btn-secondary mt-2" onclick="this.closest('[id^=qrModal]').style.display='none'">Chiudi</button>
+            </div>
+        </div>
+        <?php endforeach; ?>
     </div>
 
     <div class="tab-pane fade" id="documenti" role="tabpanel">
@@ -143,34 +165,31 @@ $storico = $stmt_storico->fetchAll();
                     <div class="mb-3"><label>File</label><input type="file" name="file_documento" class="form-control" required></div>
                     <div class="mb-3"><label>Descrizione</label><input type="text" name="descrizione_documento" class="form-control" placeholder="Es. Certificato medico agonistico"></div>
                     <div class="mb-3"><label>Data Scadenza (opzionale)</label><input type="date" name="data_scadenza_documento" class="form-control"></div>
-                    <button type="submit" class="btn btn-primary">Carica</button>
+                    <button type="submit" class="btn btn-primary"><i class="bi bi-upload me-1"></i>Carica</button>
                 </form>
             </div>
         </div>
         <div class="card mt-3">
             <div class="card-header"><h5>Documenti Caricati</h5></div>
             <div class="card-body">
-                <table class="table table-sm"><thead><tr><th>File</th><th>Descrizione</th><th>Scadenza</th><th>Caricato il</th><th>Azioni</th></tr></thead><tbody>
+                <div class="table-responsive"><table class="table table-sm"><thead><tr><th>File</th><th>Descrizione</th><th>Scadenza</th><th>Caricato il</th><th>Azioni</th></tr></thead><tbody>
             <?php foreach($documenti_socio as $doc): ?>
                 <tr>
                     <td><a href="#"><?php echo htmlspecialchars($doc['nome_file']); ?></a></td>
                     <td><?php echo htmlspecialchars($doc['descrizione']); ?></td>
                     <td><?php echo $doc['data_scadenza'] ? date('d/m/Y', strtotime($doc['data_scadenza'])) : '-'; ?></td>
                     <td><?php echo date('d/m/Y', strtotime($doc['created_at'])); ?></td>
-                    <td><a href="#" class="btn btn-sm btn-danger"><i class="bi bi-trash"></i></a></td>
+                    <td><a href="#" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></a></td>
                 </tr>
             <?php endforeach; ?>
-            </tbody></table>
+            </tbody></table></div>
         </div></div>
     </div>
 
     <div class="tab-pane fade" id="storico" role="tabpanel">
         <div class="card mt-3"><div class="card-header"><h5>Storico Attività</h5></div><div class="card-body">
             <ul class="list-group list-group-flush">
-                <?php 
-                $stmt_storico = $pdo->prepare("SELECT st.*, u.email as utente_email FROM storico_attivita_socio st LEFT JOIN utenti u ON st.utente_id = u.id WHERE st.socio_id = ? ORDER BY st.data_attivita DESC");
-                $stmt_storico->execute([$socio_id]);
-                $storico = $stmt_storico->fetchAll();
+                <?php
                 if(empty($storico)):
                 ?>
                     <li class="list-group-item text-muted">Nessuna attività registrata.</li>

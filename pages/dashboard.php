@@ -10,6 +10,12 @@ $is_super_admin = ($_SESSION['user_role'] ?? '') === 'super_admin';
 $associazione_id = $_SESSION['associazione_id'] ?? null;
 $has_assoc = !empty($associazione_id);
 
+// Super admin: switch associazione (dal sidebar link)
+if ($is_super_admin && isset($_GET['switch_assoc'])) {
+    unset($_SESSION['associazione_id'], $_SESSION['associazione_nome']);
+    redirect('index.php?page=dashboard');
+}
+
 // Super admin: gestione cambio associazione dal dashboard
 if ($is_super_admin && isset($_GET['assoc_id'])) {
     $assocParam = $_GET['assoc_id'];
@@ -71,7 +77,8 @@ try {
 
 } catch (PDOException $e) {
     // Gestione errore
-    echo "<div class=\"alert alert-danger\">Errore nel caricamento dei dati della dashboard: " . $e->getMessage() . "</div>";
+    error_log('dashboard.php PDOException: ' . $e->getMessage());
+    echo "<div class=\"alert alert-danger\">Errore nel caricamento dei dati della dashboard. Riprova più tardi.</div>";
 }
 
 ?>
@@ -190,32 +197,8 @@ try {
     </div>
 </div>
 
-<!-- Script per futuri grafici -->
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<!-- Grafico quote - da implementare -->
 <script>
-    // Esempio di implementazione futura per il grafico delle quote
-    // const ctx = document.getElementById('quoteChart');
-    // new Chart(ctx, {
-    //     type: 'bar',
-    //     data: {
-    //         labels: ['Pagate', 'Scadute', 'Da Pagare'],
-    //         datasets: [{
-    //             label: 'Stato Quote <?php echo date("Y"); ?>',
-    //             data: [12, 5, 3], // Dati da caricare via PHP/API
-    //             borderWidth: 1
-    //         }]
-    //     },
-    //     options: {
-    //         scales: {
-    //             y: { beginAtZero: true }
-    //         }
-    //     }
-    // });
-    
-    // Dashboard specific GSAP animations
-    document.addEventListener('DOMContentLoaded', function() {
-        if (window.AnimationManager) {
-            window.AnimationManager.animateDashboardStats();
-        }
-    });
+    // Placeholder per futura implementazione con Chart.js
+    // Il canvas #quoteChart è pronto per l'uso
 </script>

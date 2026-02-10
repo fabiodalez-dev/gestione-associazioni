@@ -40,7 +40,14 @@ $allowed_pages = [
     'stampa-tessera' => 'pages/stampa-tessera.php',
     'genera-tessera-pdf' => 'pages/genera-tessera-pdf.php',
     'associazioni' => 'pages/associazioni.php',
+    // Pagine Email & Notifiche
+    'email-impostazioni' => 'pages/email_impostazioni.php',
+    'email-templates' => 'pages/email_templates.php',
+    'email-coda' => 'pages/email_coda.php',
+    'email-log' => 'pages/email_log.php',
     // Pagine API e azioni
+    'api-keys' => 'pages/api_keys.php',
+    'api-docs' => 'pages/api_docs.php',
     'export' => 'api/export.php',
 ];
 
@@ -80,9 +87,14 @@ if (in_array($page_key, $raw_pages, true)) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?php echo escapeOutput($_SESSION['app_name'] ?? 'Associazione Soci Manager'); ?></title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="assets/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
+    <link href="assets/vendor/bootstrap-icons/font/bootstrap-icons.min.css" rel="stylesheet">
     <link href="assets/css/style.css" rel="stylesheet">
+    <meta name="theme-color" content="#FF7B11">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="assets/icons/icon-192.png">
 </head>
 <body>
     <!-- Mobile Header (only visible on mobile when user is logged in) -->
@@ -121,8 +133,13 @@ if (in_array($page_key, $raw_pages, true)) {
         </div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="assets/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
     <script src="assets/js/main.js"></script>
+    <script>
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('./service-worker.js').catch(function() {});
+    }
+    </script>
 </body>
 </html>
 <?php

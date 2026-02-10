@@ -154,6 +154,23 @@ try {
         }
         echo str_repeat('-', 50) . "\n";
     }
+    // Migration 7: Email system (smtp_settings, email_templates, email_queue, email_log)
+    if (file_exists('migrations/add_email_system.php')) {
+        require_once 'migrations/add_email_system.php';
+        echo "\n7. Running email system migration...\n";
+        echo str_repeat('-', 50) . "\n";
+        $result = runEmailSystemMigration($pdo);
+        if ($result['success']) {
+            echo "✅ " . $result['message'] . "\n";
+            if (!empty($result['changes'])) {
+                foreach ($result['changes'] as $c) echo "   - $c\n";
+            }
+        } else {
+            echo "❌ " . $result['message'] . "\n";
+        }
+        echo str_repeat('-', 50) . "\n";
+    }
+
     // Check current schema status
     echo "\nCurrent schema status:\n";
     
